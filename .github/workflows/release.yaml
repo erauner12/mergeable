@@ -12,6 +12,8 @@ permissions:
 jobs:
   docker:
     runs-on: ubuntu-latest
+    env:
+      GHCR_OWNER: erauner12
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -41,7 +43,7 @@ jobs:
         uses: docker/metadata-action@v5
         id: meta
         with:
-          images: ghcr.io/${{ github.repository }}
+          images: ghcr.io/${{ env.GHCR_OWNER }}/mergeable
           tags: |
             type=raw,value=${{ github.sha }}
             type=raw,value=latest
@@ -57,14 +59,16 @@ jobs:
             VITE_COMMIT_SHA=${{ github.sha }}
       - name: Sign image
         run: |
-          cosign sign --yes --key env://COSIGN_PRIVATE_KEY  ghcr.io/${{ github.repository }}:${{ github.sha }}
-          cosign sign --yes --key env://COSIGN_PRIVATE_KEY  ghcr.io/${{ github.repository }}:latest
+          cosign sign --yes --key env://COSIGN_PRIVATE_KEY  ghcr.io/${{ env.GHCR_OWNER }}/mergeable:${{ github.sha }}
+          cosign sign --yes --key env://COSIGN_PRIVATE_KEY  ghcr.io/${{ env.GHCR_OWNER }}/mergeable:latest
         env:
           COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
           COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
   helm:
     runs-on: ubuntu-latest
     needs: [docker]
+    env:
+      GHCR_OWNER: erauner12
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -84,6 +88,6 @@ jobs:
           value: ${{ github.sha }}
           commitChange: false
       - name: Package chart
-        run: helm package helm/mergeable --version 0.0.${{ github.run_number }} --destination dist
+        run: helm package helm/mergeable --version 0.0.${{ github.run_number }} --app-version ${{ github.sha }} --destination dist
       - name: Push chart
-        run: helm push dist/*.tgz oci://ghcr.io/pvcnt/helm
+        run: helm push dist/*.tgz oci://ghcr.io/${{ env.GHCR_OWNER }}/helm

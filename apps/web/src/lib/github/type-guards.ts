@@ -1,8 +1,8 @@
 import {
   StatusState,
   PullRequestReviewState,
-  CheckRun,
-  StatusContext,
+  type CheckRun,
+  type StatusContext,
 } from "../../../generated/gql/graphql";
 
 type Actor =

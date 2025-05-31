@@ -1,34 +1,34 @@
-import { Octokit } from "octokit";
 import { throttling } from "@octokit/plugin-throttling";
+import { Octokit } from "octokit";
+import { isNonNull, isNonNullish } from "remeda";
+import {
+  CheckConclusionState,
+  PullRequestReviewDecision,
+  PullRequestReviewState,
+  SearchDocument,
+  SearchFullDocument,
+  StatusState,
+  type CheckRun,
+  type SearchFullQuery,
+  type SearchQuery,
+  type StatusContext,
+} from "../../../generated/gql/graphql";
+import { prepareQuery } from "./search";
+import {
+  hasLatestOpinionatedReviews,
+  hasMergeQueueEntry,
+  hasStatusCheckRollup,
+} from "./type-guards";
 import type {
+  Check,
+  CheckState,
+  Discussion,
   Participant,
+  Profile,
   PullProps,
   Team,
   User,
-  Profile,
-  Discussion,
-  CheckState,
-  Check,
 } from "./types";
-import { prepareQuery } from "./search";
-import { isNonNull, isNonNullish } from "remeda";
-import {
-  hasMergeQueueEntry,
-  hasStatusCheckRollup,
-  hasLatestOpinionatedReviews,
-} from "./type-guards";
-import {
-  SearchDocument,
-  type SearchQuery,
-  SearchFullDocument,
-  type SearchFullQuery,
-  PullRequestReviewDecision,
-  StatusState,
-  PullRequestReviewState,
-  CheckConclusionState,
-  type CheckRun,
-  type StatusContext,
-} from "../../../generated/gql/graphql";
 
 const MyOctokit = Octokit.plugin(throttling);
 
@@ -96,9 +96,10 @@ export class DefaultGitHubClient implements GitHubClient {
       : (SearchDocument.toString() as string);
 
     const octokit = this.getOctokit(endpoint);
-    const data = await octokit.graphql<
-      SearchQuery | SearchFullQuery
-    >(query, { q, limit });
+    const data = await octokit.graphql<SearchQuery | SearchFullQuery>(query, {
+      q,
+      limit,
+    });
     return (
       data.search.edges
         ?.filter(isNonNull)
@@ -141,7 +142,6 @@ export class DefaultGitHubClient implements GitHubClient {
     if (!res || res.node?.__typename !== "PullRequest") {
       return null;
     }
-    const node = res.node;
     const discussions: Discussion[] = [];
     let participants: Participant[] = [];
     let numComments = 0;
@@ -196,82 +196,99 @@ export class DefaultGitHubClient implements GitHubClient {
       }
     }
 
+    // Cast node to a type that includes optional headRefName and files,
+    // or use a more specific generated type if available and appropriate.
+    const prNode = res.node as typeof res.node & {
+      headRefName?: string;
+      files?: { nodes?: ({ path: string } | null)[] };
+    };
+
     return {
-      id: node.id,
-      repo: `${node.repository.owner.login}/${node.repository.name}`,
-      number: node.number,
-      title: node.title,
-      body: node.body,
-      state: node.isDraft
+      id: prNode.id,
+      repo: `${prNode.repository.owner.login}/${prNode.repository.name}`,
+      number: prNode.number,
+      title: prNode.title,
+      body: prNode.body,
+      state: prNode.isDraft
         ? "draft"
-        : node.merged
+        : prNode.merged
           ? "merged"
-          : node.closed
+          : prNode.closed
             ? "closed"
-            : hasMergeQueueEntry(node)
+            : hasMergeQueueEntry(prNode)
               ? "enqueued"
-              : node.reviewDecision == PullRequestReviewDecision.Approved
+              : prNode.reviewDecision == PullRequestReviewDecision.Approved
                 ? "approved"
                 : "pending",
-      checkState: hasStatusCheckRollup(node)
-        ? this.toCheckState(node.statusCheckRollup.state)
+      checkState: hasStatusCheckRollup(prNode)
+        ? this.toCheckState(prNode.statusCheckRollup.state)
         : "pending",
       queueState: undefined,
-      createdAt: this.toDate(node.createdAt),
-      updatedAt: this.toDate(node.updatedAt),
-      enqueuedAt: hasMergeQueueEntry(node)
-        ? this.toDate(node.mergeQueueEntry.enqueuedAt)
+      createdAt: this.toDate(prNode.createdAt),
+      updatedAt: this.toDate(prNode.updatedAt),
+      enqueuedAt: hasMergeQueueEntry(prNode)
+        ? this.toDate(prNode.mergeQueueEntry.enqueuedAt)
         : undefined,
-      mergedAt: node.mergedAt ? this.toDate(node.mergedAt) : undefined,
-      closedAt: node.closedAt ? this.toDate(node.closedAt) : undefined,
-      locked: node.locked,
-      url: `${node.url}`,
-      labels: node.labels?.nodes?.filter(isNonNullish).map((n) => n.name) ?? [],
-      additions: node.additions,
-      deletions: node.deletions,
-      author: this.makeUser(node.author),
+      mergedAt: prNode.mergedAt ? this.toDate(prNode.mergedAt) : undefined,
+      closedAt: prNode.closedAt ? this.toDate(prNode.closedAt) : undefined,
+      locked: prNode.locked,
+      url: `${prNode.url}`,
+      labels:
+        prNode.labels?.nodes?.filter(isNonNullish).map((n) => n.name) ?? [],
+      additions: prNode.additions,
+      deletions: prNode.deletions,
+      author: this.makeUser(prNode.author),
       requestedReviewers:
-        node.reviewRequests?.nodes
+        prNode.reviewRequests?.nodes
           ?.map((n) => n?.requestedReviewer)
           .filter(isNonNullish)
           .filter((n) => n?.__typename != "Team")
           .map((n) => this.makeUser(n))
           .filter(isNonNull) ?? [],
       requestedTeams:
-        node.reviewRequests?.nodes
+        prNode.reviewRequests?.nodes
           ?.map((n) => n?.requestedReviewer)
           .filter(isNonNullish)
           .filter((n) => n.__typename == "Team")
           .map((n) => ({ id: n.id, name: n.combinedSlug })) ?? [],
-      reviews: hasLatestOpinionatedReviews(node)
-        ?
-          (() => {
+      reviews: hasLatestOpinionatedReviews(prNode)
+        ? (() => {
             type Latest = NonNullable<
-              NonNullable<typeof node.latestOpinionatedReviews["nodes"]>[number]
+              NonNullable<
+                (typeof prNode.latestOpinionatedReviews)["nodes"]
+              >[number]
             >;
-            return node.latestOpinionatedReviews.nodes
-              ?.filter(isNonNullish)
-              .filter(
-                (n: Latest) =>
-                  n.state !== PullRequestReviewState.Dismissed &&
-                  n.state !== PullRequestReviewState.Pending,
-              )
-              .map((n: Latest) => ({
-                author: this.makeUser(n.author),
-                collaborator: n.authorCanPushToRepository,
-                approved: n.state === PullRequestReviewState.Approved,
-              })) ?? [];
+            return (
+              prNode.latestOpinionatedReviews.nodes
+                ?.filter(isNonNullish)
+                .filter(
+                  (n: Latest) =>
+                    n.state !== PullRequestReviewState.Dismissed &&
+                    n.state !== PullRequestReviewState.Pending,
+                )
+                .map((n: Latest) => ({
+                  author: this.makeUser(n.author),
+                  collaborator: n.authorCanPushToRepository,
+                  approved: n.state === PullRequestReviewState.Approved,
+                })) ?? []
+            );
           })()
         : [],
-      checks: hasStatusCheckRollup(node)
-        ?
-          (() => {
+      checks: hasStatusCheckRollup(prNode)
+        ? (() => {
             const nodes =
-              node.statusCheckRollup.contexts?.nodes?.filter(isNonNullish) ?? [];
+              prNode.statusCheckRollup.contexts?.nodes?.filter(isNonNullish) ??
+              [];
             return nodes.map((n) => this.makeCheck(n));
           })()
         : [],
       discussions,
+      // Add new fields here
+      branch: prNode.headRefName ?? "", // Provide a fallback if headRefName might be undefined
+      files:
+        prNode.files?.nodes
+          ?.filter(isNonNullish)
+          .map((f: { path: string }) => f.path) ?? [],
     };
   }
 
@@ -340,7 +357,6 @@ export class DefaultGitHubClient implements GitHubClient {
           ? "success"
           : "pending";
   }
-
 
   private addOrUpdateParticipant(
     participants: Participant[],

@@ -1,26 +1,57 @@
-import { Button, Card, H3 } from "@blueprintjs/core";
-import { useState } from "react";
+import { Button, Card, FormGroup, H3, InputGroup } from "@blueprintjs/core";
+import { useEffect, useState } from "react";
+import { useNavigate } from "react-router";
+import { isTruthy } from "remeda";
+import ConfirmDialog from "../components/ConfirmDialog";
 import ConnectionDialog from "../components/ConnectionDialog";
 import ConnectionTable from "../components/ConnectionTable";
-import ConfirmDialog from "../components/ConfirmDialog";
-import { useConnections } from "../lib/queries";
+import { gitHubClient } from "../github";
 import {
   deleteConnection,
   resetSections,
   saveConnection,
 } from "../lib/mutations";
+import { useConnections } from "../lib/queries";
+import { getDefaultRoot, setDefaultRoot } from "../lib/settings";
+import { useToaster } from "../lib/toaster";
 import type { Connection, ConnectionProps } from "../lib/types";
 import styles from "./settings.module.scss";
-import { useToaster } from "../lib/toaster";
-import { useNavigate } from "react-router";
-import { gitHubClient } from "../github";
-import { isTruthy } from "remeda";
+
 export default function Settings() {
   const [isEditing, setEditing] = useState(false);
   const [isResetting, setResetting] = useState(false);
   const connections = useConnections();
   const navigate = useNavigate();
   const toaster = useToaster();
+
+  const [cloneRoot, setCloneRoot] = useState<string>("");
+  const [initialCloneRoot, setInitialCloneRoot] = useState<string>("");
+
+  useEffect(() => {
+    getDefaultRoot()
+      .then((root) => {
+        setCloneRoot(root);
+        setInitialCloneRoot(root);
+      })
+      .catch(console.error);
+  }, []);
+
+  const handleSaveCloneRoot = async () => {
+    try {
+      await setDefaultRoot(cloneRoot);
+      setInitialCloneRoot(cloneRoot); // Update initial state on successful save
+      toaster?.show({
+        message: "Default clone root saved.",
+        intent: "success",
+      });
+    } catch (error) {
+      console.error("Failed to save clone root:", error);
+      toaster?.show({
+        message: "Failed to save default clone root.",
+        intent: "danger",
+      });
+    }
+  };
 
   const allowedUrls = isTruthy(import.meta.env.MERGEABLE_GITHUB_URLS)
     ? import.meta.env.MERGEABLE_GITHUB_URLS.split(",")
@@ -71,6 +102,33 @@ export default function Settings() {
             connections={connections.data}
             onSubmit={handleEdit}
             onDelete={handleDelete}
+          />
+        </Card>
+
+        <div className={styles.header}>
+          <H3 className={styles.title}>Repository Settings</H3>
+        </div>
+        <Card className={styles.settingsCard}>
+          <FormGroup
+            label="Default Clone Root"
+            helperText="The default local directory where repositories are cloned (e.g., ~/git, /projects)."
+            labelFor="clone-root-input"
+            className={styles.formGroup}
+          >
+            <InputGroup
+              id="clone-root-input"
+              value={cloneRoot}
+              onChange={(e) => setCloneRoot(e.target.value)}
+              placeholder="e.g., ~/git/work"
+              className={styles.input}
+            />
+          </FormGroup>
+          <Button
+            text="Save Clone Root"
+            intent="primary"
+            onClick={handleSaveCloneRoot}
+            disabled={cloneRoot === initialCloneRoot}
+            className={styles.saveButton}
           />
         </Card>
 

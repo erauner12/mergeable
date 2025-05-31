@@ -1,10 +1,10 @@
 import { HTMLTable, Icon } from "@blueprintjs/core";
+import { prop, sortBy } from "remeda";
+import { useLocalStorage } from "usehooks-ts";
 import type { Pull } from "../lib/github/types";
 import IconWithTooltip from "./IconWithTooltip";
 import PullRow from "./PullRow";
 import styles from "./PullTable.module.scss";
-import { prop, sortBy } from "remeda";
-import { useLocalStorage } from "usehooks-ts";
 
 export interface PullTableProps {
   pulls: Pull[];
@@ -39,7 +39,11 @@ export default function PullTable({ pulls, sizes }: PullTableProps) {
       <thead>
         <tr>
           <th>&nbsp;</th>
+          {/* Star */}
           <th>&nbsp;</th>
+          {/* RepoPrompt column header (blank icon) */}
+          <th>&nbsp;</th>
+          {/* Attention flag */}
           <th>Author</th>
           <th>
             <IconWithTooltip title="Status" icon="git-pull" />

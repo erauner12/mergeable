@@ -1,10 +1,10 @@
-import { test, expect } from "vitest";
+import { expect, test } from "vitest";
 import { isInAttentionSet } from "../../../src/lib/github/attention";
-import type { Pull } from "../../../src/lib/github/types";
+import type { Pull, PullState, User } from "../../../src/lib/github/types"; // Added PullState, User
 
-const me = { id: "99", name: "test", avatarUrl: "", bot: false };
-const user1 = { id: "1", name: "test1", avatarUrl: "", bot: false };
-const user2 = { id: "2", name: "test2", avatarUrl: "", bot: false };
+const me: User = { id: "99", name: "test", avatarUrl: "", bot: false };
+const user1: User = { id: "1", name: "test1", avatarUrl: "", bot: false };
+const user2: User = { id: "2", name: "test2", avatarUrl: "", bot: false };
 const viewer = { user: me, teams: [] };
 
 test("should contain the author when pull is approved", () => {
@@ -219,32 +219,46 @@ test("should contain a reviewer when a user replied", () => {
   expect(attention).toEqual({ set: true, reason: "1 unread discussion" });
 });
 
-function mockPull(props?: Omit<Partial<Pull>, "uid" | "url">): Pull {
+function mockPull(
+  props?: Partial<Omit<Pull, "uid" | "url">> & { state?: PullState },
+): Pull {
+  const id = props?.id ?? "1";
+  const repo = props?.repo ?? "pvcnt/mergeable";
+  const number = props?.number ?? 1;
+  const host = props?.host ?? "github.com";
+  const connection = props?.connection ?? "1";
+
   return {
-    id: "1",
-    repo: "pvcnt/mergeable",
-    number: 1,
-    title: "Pull request",
-    body: "",
-    state: "pending",
-    checkState: "pending",
-    createdAt: "2024-08-05T15:57:00Z",
-    updatedAt: "2024-08-05T15:57:00Z",
-    locked: false,
-    url: "https://github.com/pvncnt/mergeable/pull/1",
-    additions: 0,
-    deletions: 0,
-    author: { id: "1", name: "pvcnt", avatarUrl: "", bot: false },
-    requestedReviewers: [],
-    requestedTeams: [],
-    reviews: [],
-    discussions: [],
-    checks: [],
-    labels: [],
-    uid: `1:1`,
-    host: "github.com",
-    sections: [],
-    connection: "1",
+    id,
+    repo,
+    number,
+    title: props?.title ?? "Pull request",
+    body: props?.body ?? "",
+    state: props?.state ?? "pending",
+    checkState: props?.checkState ?? "pending",
+    createdAt: props?.createdAt ?? "2024-08-05T15:57:00Z",
+    updatedAt: props?.updatedAt ?? "2024-08-05T15:57:00Z",
+    locked: props?.locked ?? false,
+    url: `https://${host}/${repo}/pull/${number}`, // Construct URL
+    additions: props?.additions ?? 0,
+    deletions: props?.deletions ?? 0,
+    author:
+      props?.author === undefined
+        ? { id: "1", name: "pvcnt", avatarUrl: "", bot: false }
+        : props.author,
+    requestedReviewers: props?.requestedReviewers ?? [],
+    requestedTeams: props?.requestedTeams ?? [],
+    reviews: props?.reviews ?? [],
+    discussions: props?.discussions ?? [],
+    checks: props?.checks ?? [],
+    labels: props?.labels ?? [],
+    branch: props?.branch ?? "main", // Ensure branch is always a string
+    files: props?.files ?? [], // Ensure files is always an array
+    uid: `${connection}:${id}`, // Construct UID
+    host,
+    sections: props?.sections ?? [],
+    connection,
+    // Spread other props that are part of Pull but not explicitly listed
     ...props,
   };
 }

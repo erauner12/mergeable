@@ -15,7 +15,7 @@ The Docker image can be started with the following command:
 docker run -d -p 8080:80 \
   -e MERGEABLE_GITHUB_URLS=https://api.github.com \
   -e MERGEABLE_EXTENDED_SEARCH=1 \
-  ghcr.io/pvcnt/mergeable
+  ghcr.io/erauner12/mergeable
 ```
 
 The Web UI will then be available at http://localhost:8080.
@@ -24,7 +24,7 @@ The above command starts the latest published image from the main branch.
 You may refer to a specific commit by using the sha1 of the target commit as the image tag, e.g.:
 
 ```bash
-docker run -d -p 8080:80 ghcr.io/pvcnt/mergeable:259cfbd2a855d72094f7dcecd8d08cc427d3e1c9
+docker run -d -p 8080:80 ghcr.io/erauner12/mergeable:259cfbd2a855d72094f7dcecd8d08cc427d3e1c9
 ```
 
 ## Configuration
@@ -32,5 +32,5 @@ docker run -d -p 8080:80 ghcr.io/pvcnt/mergeable:259cfbd2a855d72094f7dcecd8d08cc
 Mergeable can be configured [using environment variables](../environment-variables/), e.g.:
 
 ```bash
-docker run -d -p 8080:80 -e MERGEABLE_GITHUB_URLS=https://api.github.com ghcr.io/pvcnt/mergeable
+docker run -d -p 8080:80 -e MERGEABLE_GITHUB_URLS=https://api.github.com ghcr.io/erauner12/mergeable
 ```

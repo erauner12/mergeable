@@ -63,6 +63,8 @@ jobs:
         run: |
           cosign sign --yes ghcr.io/${{ env.GHCR_OWNER }}/mergeable:${{ github.sha }}
           cosign sign --yes ghcr.io/${{ env.GHCR_OWNER }}/mergeable:latest
+      - name: Write image reference to summary
+        run: echo "### Docker Image Pushed :docker: \`ghcr.io/${{ env.GHCR_OWNER }}/mergeable:${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
   helm:
     runs-on: ubuntu-latest
     needs: [docker]

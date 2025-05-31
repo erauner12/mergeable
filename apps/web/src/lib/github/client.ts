@@ -214,7 +214,7 @@ export class DefaultGitHubClient implements GitHubClient {
                 ? "approved"
                 : "pending",
       checkState: hasStatusCheckRollup(node)
-        ? this.toCheckState(node.statusCheckRollup?.state)
+        ? this.toCheckState(node.statusCheckRollup.state)
         : "pending",
       queueState: undefined,
       createdAt: this.toDate(node.createdAt),
@@ -245,24 +245,34 @@ export class DefaultGitHubClient implements GitHubClient {
           .map((n) => ({ id: n.id, name: n.combinedSlug })) ?? [],
       reviews: hasLatestOpinionatedReviews(node)
         ?
-            node.latestOpinionatedReviews.nodes
+          (() => {
+            type Latest = NonNullable<
+              typeof node.latestOpinionatedReviews.nodes
+            >[number];
+            return node.latestOpinionatedReviews.nodes
               ?.filter(isNonNullish)
               .filter(
-                (n) =>
+                (n: Latest) =>
                   n.state !== PullRequestReviewState.Dismissed &&
                   n.state !== PullRequestReviewState.Pending,
               )
-              .map((n) => ({
+              .map((n: Latest) => ({
                 author: this.makeUser(n.author),
                 collaborator: n.authorCanPushToRepository,
                 approved: n.state === PullRequestReviewState.Approved,
-              })) ?? []
+              })) ?? [];
+          })()
         : [],
       checks: hasStatusCheckRollup(node)
         ?
-            node.statusCheckRollup.contexts?.nodes
+          (() => {
+            type Ctx = NonNullable<
+              typeof node.statusCheckRollup.contexts?.nodes
+            >[number];
+            return node.statusCheckRollup.contexts?.nodes
               ?.filter(isNonNullish)
-              .map((n) => this.makeCheck(n)) ?? []
+              .map((n: Ctx) => this.makeCheck(n)) ?? [];
+          })()
         : [],
       discussions,
     };
@@ -288,22 +298,22 @@ export class DefaultGitHubClient implements GitHubClient {
   }
 
   private makeCheck(obj: CheckRun | StatusContext): Check {
-    if (obj.__typename === "CheckRun") {
+    if ("name" in obj) {
       return {
         name: obj.name,
         state:
           obj.conclusion === CheckConclusionState.Success
             ? "success"
             : "pending",
-        description: obj.name,
-        url: obj.url ? `${obj.url}` : null,
+        description: obj.title ?? obj.name,
+        url: obj.url ? String(obj.url) : null,
       };
     } else {
       return {
         name: obj.context,
         state: this.toCheckState(obj.state),
-        description: obj.context,
-        url: obj.targetUrl ? `${obj.targetUrl}` : null,
+        description: obj.description ?? obj.context,
+        url: obj.targetUrl ? String(obj.targetUrl) : null,
       };
     }
   }
@@ -314,7 +324,7 @@ export class DefaultGitHubClient implements GitHubClient {
     } else if (v instanceof Date) {
       return v.toISOString();
     } else {
-      return `${v}`;
+      return String(v);
     }
   }
 

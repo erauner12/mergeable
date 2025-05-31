@@ -266,12 +266,9 @@ export class DefaultGitHubClient implements GitHubClient {
       checks: hasStatusCheckRollup(node)
         ?
           (() => {
-            type Ctx = NonNullable<
-              typeof node.statusCheckRollup.contexts?.nodes
-            >[number];
-            return node.statusCheckRollup.contexts?.nodes
-              ?.filter(isNonNullish)
-              .map((n: Ctx) => this.makeCheck(n)) ?? [];
+            const nodes =
+              node.statusCheckRollup.contexts?.nodes?.filter(isNonNullish) ?? [];
+            return nodes.map((n) => this.makeCheck(n));
           })()
         : [],
       discussions,

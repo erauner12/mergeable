@@ -58,12 +58,11 @@ jobs:
           build-args: |
             VITE_COMMIT_SHA=${{ github.sha }}
       - name: Sign image
-        run: |
-          cosign sign --yes --key env://COSIGN_PRIVATE_KEY  ghcr.io/${{ env.GHCR_OWNER }}/mergeable:${{ github.sha }}
-          cosign sign --yes --key env://COSIGN_PRIVATE_KEY  ghcr.io/${{ env.GHCR_OWNER }}/mergeable:latest
         env:
-          COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
-          COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
+          COSIGN_EXPERIMENTAL: "1" # Required for keyless signing
+        run: |
+          cosign sign --yes ghcr.io/${{ env.GHCR_OWNER }}/mergeable:${{ github.sha }}
+          cosign sign --yes ghcr.io/${{ env.GHCR_OWNER }}/mergeable:latest
   helm:
     runs-on: ubuntu-latest
     needs: [docker]

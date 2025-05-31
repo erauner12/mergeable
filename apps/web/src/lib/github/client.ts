@@ -13,6 +13,11 @@ import type {
 import { prepareQuery } from "./search";
 import { isNonNull, isNonNullish } from "remeda";
 import {
+  hasMergeQueueEntry,
+  hasStatusCheckRollup,
+  hasLatestOpinionatedReviews,
+} from "./type-guards";
+import {
   SearchDocument,
   type SearchQuery,
   SearchFullDocument,
@@ -21,6 +26,8 @@ import {
   StatusState,
   PullRequestReviewState,
   CheckConclusionState,
+  type CheckRun,
+  type StatusContext,
 } from "../../../generated/gql/graphql";
 
 const MyOctokit = Octokit.plugin(throttling);
@@ -48,8 +55,7 @@ type Actor =
       __typename: "Bot" | "Mannequin" | "User" | "EnterpriseUserAccount";
       id: string;
       login: string;
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      avatarUrl: any;
+      avatarUrl: string;
     }
   | { __typename: "Organization" }
   | undefined
@@ -202,17 +208,19 @@ export class DefaultGitHubClient implements GitHubClient {
           ? "merged"
           : node.closed
             ? "closed"
-            : (node as any).mergeQueueEntry
+            : hasMergeQueueEntry(node)
               ? "enqueued"
               : node.reviewDecision == PullRequestReviewDecision.Approved
                 ? "approved"
                 : "pending",
-      checkState: this.toCheckState((node as any).statusCheckRollup?.state),
+      checkState: hasStatusCheckRollup(node)
+        ? this.toCheckState(node.statusCheckRollup.state)
+        : "pending",
       queueState: undefined,
       createdAt: this.toDate(node.createdAt),
       updatedAt: this.toDate(node.updatedAt),
-      enqueuedAt: (node as any).mergeQueueEntry
-        ? this.toDate((node as any).mergeQueueEntry.enqueuedAt)
+      enqueuedAt: hasMergeQueueEntry(node)
+        ? this.toDate(node.mergeQueueEntry.enqueuedAt)
         : undefined,
       mergedAt: node.mergedAt ? this.toDate(node.mergedAt) : undefined,
       closedAt: node.closedAt ? this.toDate(node.closedAt) : undefined,
@@ -235,23 +243,34 @@ export class DefaultGitHubClient implements GitHubClient {
           .filter(isNonNullish)
           .filter((n) => n.__typename == "Team")
           .map((n) => ({ id: n.id, name: n.combinedSlug })) ?? [],
-      reviews:
-        (node as any).latestOpinionatedReviews?.nodes
-          ?.filter(isNonNullish)
-          .filter(
-            (n: any) =>
-              n.state !== PullRequestReviewState.Dismissed &&
-              n.state !== PullRequestReviewState.Pending,
-          )
-          .map((n: any) => ({
-            author: this.makeUser(n.author),
-            collaborator: n.authorCanPushToRepository,
-            approved: n.state === PullRequestReviewState.Approved,
-          })) ?? [],
-      checks:
-        (node as any).statusCheckRollup?.contexts?.nodes
-          ?.filter(isNonNullish)
-          .map((n: any) => this.makeCheck(n)) ?? [],
+      reviews: hasLatestOpinionatedReviews(node)
+        ?
+          (() => {
+            type Latest = NonNullable<
+              NonNullable<typeof node.latestOpinionatedReviews["nodes"]>[number]
+            >;
+            return node.latestOpinionatedReviews.nodes
+              ?.filter(isNonNullish)
+              .filter(
+                (n: Latest) =>
+                  n.state !== PullRequestReviewState.Dismissed &&
+                  n.state !== PullRequestReviewState.Pending,
+              )
+              .map((n: Latest) => ({
+                author: this.makeUser(n.author),
+                collaborator: n.authorCanPushToRepository,
+                approved: n.state === PullRequestReviewState.Approved,
+              })) ?? [];
+          })()
+        : [],
+      checks: hasStatusCheckRollup(node)
+        ?
+          (() => {
+            const nodes =
+              node.statusCheckRollup.contexts?.nodes?.filter(isNonNullish) ?? [];
+            return nodes.map((n) => this.makeCheck(n));
+          })()
+        : [],
       discussions,
     };
   }
@@ -275,53 +294,34 @@ export class DefaultGitHubClient implements GitHubClient {
     }
   }
 
-  private makeCheck(
-    obj:
-      | {
-          __typename: "CheckRun";
-          name: string;
-          title?: string | null;
-          conclusion?: CheckConclusionState | null;
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          url: any;
-        }
-      | {
-          __typename: "StatusContext";
-          context: string;
-          description?: string | null;
-          state: StatusState;
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          targetUrl?: any;
-        },
-  ): Check {
-    if (obj.__typename === "CheckRun") {
+  private makeCheck(obj: CheckRun | StatusContext): Check {
+    if ("name" in obj) {
       return {
         name: obj.name,
         state:
           obj.conclusion === CheckConclusionState.Success
             ? "success"
             : "pending",
-        description: obj.name,
-        url: obj.url ? `${obj.url}` : null,
+        description: obj.title ?? obj.name,
+        url: obj.url ? String(obj.url) : null,
       };
     } else {
       return {
         name: obj.context,
         state: this.toCheckState(obj.state),
-        description: obj.context,
-        url: obj.targetUrl ? `${obj.targetUrl}` : null,
+        description: obj.description ?? obj.context,
+        url: obj.targetUrl ? String(obj.targetUrl) : null,
       };
     }
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  private toDate(v: any) {
+  private toDate(v: unknown): string {
     if (typeof v === "number") {
       return new Date(v).toISOString();
     } else if (v instanceof Date) {
       return v.toISOString();
     } else {
-      return `${v}`;
+      return String(v);
     }
   }
 
@@ -345,8 +345,7 @@ export class DefaultGitHubClient implements GitHubClient {
   private addOrUpdateParticipant(
     participants: Participant[],
     actor: Actor,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    activeAt: any,
+    activeAt: unknown,
   ) {
     const user = this.makeUser(actor);
     if (user) {

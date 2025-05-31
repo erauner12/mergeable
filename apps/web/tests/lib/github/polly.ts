@@ -18,7 +18,7 @@ export function setupRecording(
   options: { recordingName?: string; recordingPath?: string } = {},
 ) {
   let polly: Polly | undefined;
-  let recordIfMissing = true;
+  let recordIfMissing = false;
   let mode: PollyConfig["mode"] = "replay";
 
   switch (process.env.POLLY_MODE) {
@@ -50,8 +50,8 @@ export function setupRecording(
       },
       matchRequestsBy: {
         method: true,
-        headers: { exclude: ["authorization", "user-agent"] },
-        body: true,
+        headers: { exclude: ["authorization", "user-agent", "content-length"] },
+        body: false,
         order: true,
         url: {
           protocol: true,
@@ -64,6 +64,19 @@ export function setupRecording(
           hash: false,
         },
       },
+    });
+
+    /** redact PAT just before the recording is written to disk */
+    polly.server.any().on("beforePersist", (_request, recording) => {
+      const auth = recording.request.headers?.authorization as
+        | string
+        | string[]
+        | undefined;
+
+      const values = Array.isArray(auth) ? auth : [auth];
+      if (values?.some(v => typeof v === "string" && v.toLowerCase().startsWith("token ghp_"))) {
+        recording.request.headers.authorization = "token ghp_token";
+      }
     });
   });
 

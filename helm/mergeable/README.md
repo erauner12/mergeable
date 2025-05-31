@@ -4,6 +4,11 @@
 
 A Helm chart for Mergeable, a better inbox for GitHub pull requests.
 
+## Installation
+
+If you built the chart from this fork, install with:
+`helm install mergeable oci://ghcr.io/erauner12/helm/mergeable --version 0.0.<run-id>`
+
 ## Maintainers
 
 | Name  | Email | Url |
@@ -18,7 +23,7 @@ A Helm chart for Mergeable, a better inbox for GitHub pull requests.
 | env                                | object | `{}`                        |             |
 | fullnameOverride                   | string | `""`                        |             |
 | image.pullPolicy                   | string | `"Always"`                  |             |
-| image.repository                   | string | `"ghcr.io/pvcnt/mergeable"` |             |
+| image.repository                   | string | `"ghcr.io/erauner12/mergeable"` |             |
 | image.tag                          | string | `"latest"`                  |             |
 | imagePullSecrets                   | list   | `[]`                        |             |
 | ingress.annotations                | object | `{}`                        |             |

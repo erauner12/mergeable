@@ -19,6 +19,8 @@ module.exports = {
     "@typescript-eslint/no-unused-vars": [
       "error",
       { args: "none" },
-    ]
+    ],
+    "@typescript-eslint/no-unsafe-member-access": "error",
+    "@typescript-eslint/no-unsafe-call": "error",
   },
 };

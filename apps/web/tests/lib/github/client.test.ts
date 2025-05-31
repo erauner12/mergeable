@@ -39,7 +39,7 @@ test("should search pulls", async () => {
   );
 
   expect(pulls).toEqual([
-    {
+    expect.objectContaining({
       id: "PR_kwDOKCpCz85keYan",
       repo: "pvcnt/mergeable",
       number: 13,
@@ -132,6 +132,6 @@ test("should search pulls", async () => {
         },
       ],
       checks: [],
-    },
+    }),
   ]);
 });

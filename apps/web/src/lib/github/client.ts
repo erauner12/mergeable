@@ -214,7 +214,9 @@ export class DefaultGitHubClient implements GitHubClient {
                 ? "approved"
                 : "pending",
       checkState: hasStatusCheckRollup(node)
-        ? this.toCheckState(node.statusCheckRollup.state)
+        ? this.toCheckState(
+            node.statusCheckRollup.state as StatusState | null | undefined,
+          )
         : "pending",
       queueState: undefined,
       createdAt: this.toDate(node.createdAt),
@@ -247,8 +249,8 @@ export class DefaultGitHubClient implements GitHubClient {
         ?
           (() => {
             type Latest = NonNullable<
-              typeof node.latestOpinionatedReviews.nodes
-            >[number];
+              NonNullable<typeof node.latestOpinionatedReviews["nodes"]>[number]
+            >;
             return node.latestOpinionatedReviews.nodes
               ?.filter(isNonNullish)
               .filter(

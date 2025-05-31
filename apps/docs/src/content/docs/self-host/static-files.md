@@ -27,5 +27,5 @@ The Web server or hosting platform must be configured so that all traffic direct
 Mergeable can be configured at build time using [using environment variables](../environment-variables/), e.g.:
 
 ```bash
-MERGEABLE_GITHUB_URLS=https://api.github.com pnpm build
+MERGEABLE_GITHUB_URLS=https://api.github.com MERGEABLE_EXTENDED_SEARCH=1 pnpm build
 ```

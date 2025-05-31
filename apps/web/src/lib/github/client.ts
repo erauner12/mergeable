@@ -15,6 +15,8 @@ import { isNonNull, isNonNullish } from "remeda";
 import {
   SearchDocument,
   type SearchQuery,
+  SearchFullDocument,
+  type SearchFullQuery,
   PullRequestReviewDecision,
   StatusState,
   PullRequestReviewState,
@@ -82,10 +84,15 @@ export class DefaultGitHubClient implements GitHubClient {
     limit: number,
   ): Promise<PullProps[]> {
     const q = prepareQuery(search, orgs);
-    const query = SearchDocument.toString() as string;
+    const useFull = Boolean(import.meta.env.MERGEABLE_EXTENDED_SEARCH);
+    const query = useFull
+      ? (SearchFullDocument.toString() as string)
+      : (SearchDocument.toString() as string);
 
     const octokit = this.getOctokit(endpoint);
-    const data = await octokit.graphql<SearchQuery>(query, { q, limit });
+    const data = await octokit.graphql<
+      SearchQuery | SearchFullQuery
+    >(query, { q, limit });
     return (
       data.search.edges
         ?.filter(isNonNull)
@@ -121,7 +128,9 @@ export class DefaultGitHubClient implements GitHubClient {
   }
 
   private makePull(
-    res: ArrayElement<SearchQuery["search"]["edges"]>,
+    res: ArrayElement<
+      SearchQuery["search"]["edges"] | SearchFullQuery["search"]["edges"]
+    >,
   ): PullProps | null {
     if (!res || res.node?.__typename !== "PullRequest") {
       return null;
@@ -144,19 +153,7 @@ export class DefaultGitHubClient implements GitHubClient {
         }
       }
     }
-    // Add reviews.
-    if (res.node.latestOpinionatedReviews?.nodes) {
-      for (const review of res.node.latestOpinionatedReviews.nodes) {
-        if (review && review.state !== PullRequestReviewState.Pending) {
-          numComments++;
-          this.addOrUpdateParticipant(
-            participants,
-            review.author,
-            review.publishedAt ?? review.createdAt,
-          );
-        }
-      }
-    }
+    // Add reviews not available on this server version.
     if (participants) {
       discussions.push({ resolved: false, participants, numComments });
     }
@@ -205,17 +202,17 @@ export class DefaultGitHubClient implements GitHubClient {
           ? "merged"
           : node.closed
             ? "closed"
-            : node.mergeQueueEntry
+            : (node as any).mergeQueueEntry
               ? "enqueued"
               : node.reviewDecision == PullRequestReviewDecision.Approved
                 ? "approved"
                 : "pending",
-      checkState: this.toCheckState(node.statusCheckRollup?.state),
-      queueState: undefined, // TODO
+      checkState: this.toCheckState((node as any).statusCheckRollup?.state),
+      queueState: undefined,
       createdAt: this.toDate(node.createdAt),
       updatedAt: this.toDate(node.updatedAt),
-      enqueuedAt: node.mergeQueueEntry
-        ? this.toDate(node.mergeQueueEntry.enqueuedAt)
+      enqueuedAt: (node as any).mergeQueueEntry
+        ? this.toDate((node as any).mergeQueueEntry.enqueuedAt)
         : undefined,
       mergedAt: node.mergedAt ? this.toDate(node.mergedAt) : undefined,
       closedAt: node.closedAt ? this.toDate(node.closedAt) : undefined,
@@ -239,22 +236,22 @@ export class DefaultGitHubClient implements GitHubClient {
           .filter((n) => n.__typename == "Team")
           .map((n) => ({ id: n.id, name: n.combinedSlug })) ?? [],
       reviews:
-        node.latestOpinionatedReviews?.nodes
+        (node as any).latestOpinionatedReviews?.nodes
           ?.filter(isNonNullish)
           .filter(
-            (n) =>
+            (n: any) =>
               n.state !== PullRequestReviewState.Dismissed &&
               n.state !== PullRequestReviewState.Pending,
           )
-          .map((n) => ({
+          .map((n: any) => ({
             author: this.makeUser(n.author),
             collaborator: n.authorCanPushToRepository,
             approved: n.state === PullRequestReviewState.Approved,
           })) ?? [],
       checks:
-        node.statusCheckRollup?.contexts?.nodes
+        (node as any).statusCheckRollup?.contexts?.nodes
           ?.filter(isNonNullish)
-          .map((n) => this.makeCheck(n)) ?? [],
+          .map((n: any) => this.makeCheck(n)) ?? [],
       discussions,
     };
   }
@@ -279,7 +276,6 @@ export class DefaultGitHubClient implements GitHubClient {
   }
 
   private makeCheck(
-    // TODO: infer from GraphQL
     obj:
       | {
           __typename: "CheckRun";
@@ -344,6 +340,7 @@ export class DefaultGitHubClient implements GitHubClient {
           ? "success"
           : "pending";
   }
+
 
   private addOrUpdateParticipant(
     participants: Participant[],

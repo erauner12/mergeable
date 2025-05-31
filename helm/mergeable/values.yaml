@@ -19,7 +19,9 @@ serviceAccount:
 podAnnotations: {}
 podLabels: {}
 
-env: {}
+env:
+  MERGEABLE_GITHUB_URLS: "https://api.github.com,https://github.medallia.com/api/v3"
+  MERGEABLE_EXTENDED_SEARCH: ""
 
 podSecurityContext: {}
 

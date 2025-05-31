@@ -15,6 +15,12 @@ A comma-separated list of allowed GitHub base URLs.
 
 A GitHub URL must be a URL to the API endpoint.
 When configured, a dropdown will be displayed instead of a text input when creating a new connection.
+## MERGEABLE_EXTENDED_SEARCH
+
+Set to a non-empty string to request additional pull request fields only available on GitHub Cloud and recent Enterprise versions.
+
+- Default: `<empty>`
+
 
 ## MERGEABLE_PR_SIZES
 

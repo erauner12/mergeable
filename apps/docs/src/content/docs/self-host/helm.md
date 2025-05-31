@@ -12,7 +12,7 @@ This is the recommended method when deploying to a Kubernetes cluster.
 The Helm chart can be deployed with the following command:
 
 ```bash
-helm install mergeable oci://ghcr.io/pvcnt/helm/mergeable
+helm install mergeable oci://ghcr.io/pvcnt/helm/mergeable --set env.MERGEABLE_GITHUB_URLS=https://api.github.com --set env.MERGEABLE_EXTENDED_SEARCH=1
 ```
 
 The above command deploys the latest published Helm chart from the main branch.

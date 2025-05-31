@@ -12,7 +12,10 @@ Using the Docker image is recommended for simple setups, e.g., when deploying di
 The Docker image can be started with the following command:
 
 ```bash
-docker run -d -p 8080:80 ghcr.io/pvcnt/mergeable
+docker run -d -p 8080:80 \
+  -e MERGEABLE_GITHUB_URLS=https://api.github.com \
+  -e MERGEABLE_EXTENDED_SEARCH=1 \
+  ghcr.io/pvcnt/mergeable
 ```
 
 The Web UI will then be available at http://localhost:8080.

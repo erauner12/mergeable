@@ -64,25 +64,19 @@ export function setupRecording(
           hash: false,
         },
       },
-      // Add filterHeaders to sanitize sensitive information before persisting
-      filterHeaders: (headers) => {
-        const newHeaders = { ...headers };
-        if (newHeaders.authorization) {
-          // Ensure authorization is an array of strings, as Polly might process it this way
-          const authValues = Array.isArray(newHeaders.authorization) ? newHeaders.authorization : [newHeaders.authorization];
-          newHeaders.authorization = authValues.map(value => {
-            if (typeof value === 'string' && value.toLowerCase().startsWith('token ghp_')) {
-              return 'token ghp_token'; // Replace with a placeholder
-            }
-            return value;
-          });
-          // If only one value after mapping, convert back to string for simplicity if that's the common case
-          if (newHeaders.authorization.length === 1) {
-            newHeaders.authorization = newHeaders.authorization[0];
-          }
-        }
-        return newHeaders;
-      },
+    });
+
+    /** redact PAT just before the recording is written to disk */
+    polly.server.any().on("beforePersist", (_request, recording) => {
+      const auth = recording.request.headers?.authorization as
+        | string
+        | string[]
+        | undefined;
+
+      const values = Array.isArray(auth) ? auth : [auth];
+      if (values?.some(v => typeof v === "string" && v.toLowerCase().startsWith("token ghp_"))) {
+        recording.request.headers.authorization = "token ghp_token";
+      }
     });
   });
 

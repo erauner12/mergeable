@@ -18,7 +18,7 @@ export function setupRecording(
   options: { recordingName?: string; recordingPath?: string } = {},
 ) {
   let polly: Polly | undefined;
-  let recordIfMissing = true;
+  let recordIfMissing = false;
   let mode: PollyConfig["mode"] = "replay";
 
   switch (process.env.POLLY_MODE) {
@@ -50,8 +50,8 @@ export function setupRecording(
       },
       matchRequestsBy: {
         method: true,
-        headers: { exclude: ["authorization", "user-agent"] },
-        body: true,
+        headers: { exclude: ["authorization", "user-agent", "content-length"] },
+        body: false,
         order: true,
         url: {
           protocol: true,

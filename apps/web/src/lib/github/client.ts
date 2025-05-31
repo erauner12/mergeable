@@ -214,9 +214,7 @@ export class DefaultGitHubClient implements GitHubClient {
                 ? "approved"
                 : "pending",
       checkState: hasStatusCheckRollup(node)
-        ? this.toCheckState(
-            node.statusCheckRollup.state as StatusState | null | undefined,
-          )
+        ? this.toCheckState(node.statusCheckRollup.state)
         : "pending",
       queueState: undefined,
       createdAt: this.toDate(node.createdAt),

@@ -1,4 +1,5 @@
 import { throttling } from "@octokit/plugin-throttling";
+import type { Endpoints } from "@octokit/types";
 import { Octokit } from "octokit";
 import { isNonNull, isNonNullish } from "remeda";
 import {
@@ -29,6 +30,10 @@ import type {
   Team,
   User,
 } from "./types";
+
+// single commit item returned by pulls.listCommits
+export type PullRequestCommit =
+  Endpoints["GET /repos/{owner}/{repo}/pulls/{pull_number}/commits"]["response"]["data"][number];
 
 const MyOctokit = Octokit.plugin(throttling);
 
@@ -61,6 +66,14 @@ type Actor =
   | undefined
   | null;
 
+/** Narrow Octokit response when `mediaType.format === 'diff'` */
+type DiffStringResponse = { data: string };
+
+/** Minimal shape for pull-request metadata we access. */
+interface PullHeadResponse {
+  data: { head: { ref: string } };
+}
+
 export async function getPullRequestDiff(
   owner: string,
   repo: string,
@@ -68,7 +81,7 @@ export async function getPullRequestDiff(
   token?: string,
 ): Promise<string> {
   const octokit = token ? new Octokit({ auth: token }) : new Octokit(); // unauth → still fine for public repos
-  const { data } = await octokit.request(
+  const { data } = (await octokit.request(
     "GET /repos/{owner}/{repo}/pulls/{pull_number}",
     {
       owner,
@@ -76,9 +89,10 @@ export async function getPullRequestDiff(
       pull_number: number,
       mediaType: { format: "diff" },
     },
-  );
+  )) as unknown as DiffStringResponse;
   // The Octokit types might return the diff data as `unknown` when mediaType.format is 'diff'
-  return data as unknown as string;
+  // already typed => no cast needed
+  return data; // `data` is already the diff string
 }
 
 export class DefaultGitHubClient implements GitHubClient {
@@ -296,10 +310,15 @@ export class DefaultGitHubClient implements GitHubClient {
         : [],
       checks: hasStatusCheckRollup(prNode)
         ? (() => {
-            const nodes =
-              prNode.statusCheckRollup.contexts?.nodes?.filter(isNonNullish) ??
-              [];
-            return nodes.map((n) => this.makeCheck(n));
+            // Buffer as unknown[], then narrow → (CheckRun | StatusContext)[]
+            const rawContexts: unknown[] =
+              prNode.statusCheckRollup.contexts?.nodes ?? [];
+
+            const nodes = rawContexts
+              .filter(isNonNullish)
+              .map((c) => c as CheckRun | StatusContext);
+
+            return nodes.map((c) => this.makeCheck(c));
           })()
         : [],
       discussions,
@@ -412,11 +431,11 @@ export async function getPullRequestMeta(
   const octokit = token ? new Octokit({ auth: token }) : new Octokit();
 
   // branch name
-  const pr = await octokit.request(
+  const { data: pr } = (await octokit.request(
     "GET /repos/{owner}/{repo}/pulls/{pull_number}",
     { owner, repo, pull_number: number },
-  );
-  const branch = pr.data.head.ref;
+  )) as PullHeadResponse;
+  const branch = pr.head.ref; // now typed
 
   // changed files (may be paginated)
   const filesResp = await octokit.paginate(
@@ -426,4 +445,58 @@ export async function getPullRequestMeta(
   const files = filesResp.map((f) => f.filename);
 
   return { branch, files };
+}
+
+// New helper functions:
+
+/**
+ * Lists commits for a pull request.
+ * @returns A promise that resolves to an array of commit objects, newest `limit` commits.
+ * Octokit's pulls.listCommits returns commits in chronological order (oldest to newest).
+ * This function returns the newest `limit` commits from that list.
+ */
+export async function listPrCommits(
+  owner: string,
+  repo: string,
+  pull_number: number,
+  limit = 250, // Default to fetching up to 250 newest commits
+  token?: string,
+): Promise<PullRequestCommit[]> {
+  // TODO: Use proper Octokit commit type: Endpoints["GET /repos/{owner}/{repo}/pulls/{pull_number}/commits"]["response"]["data"]
+  const octokit = token ? new Octokit({ auth: token }) : new Octokit();
+  const commits = (await octokit.paginate(
+    octokit.rest.pulls.listCommits,
+    {
+      owner,
+      repo,
+      pull_number,
+      per_page: 100,
+    },
+  )) as unknown as PullRequestCommit[];
+  // .slice(-limit) gets the last 'limit' elements, which are the newest ones.
+  return commits.slice(-limit);
+}
+
+/**
+ * Fetches the diff for a specific commit.
+ * @returns A promise that resolves to the diff string.
+ */
+export async function getCommitDiff(
+  owner: string,
+  repo: string,
+  sha: string,
+  token?: string,
+): Promise<string> {
+  const octokit = token ? new Octokit({ auth: token }) : new Octokit();
+  const { data } = (await octokit.request(
+    "GET /repos/{owner}/{repo}/commits/{commit_sha}",
+    {
+      owner,
+      repo,
+      commit_sha: sha,
+      mediaType: { format: "diff" },
+    },
+  )) as unknown as DiffStringResponse;
+  // The Octokit types might return the diff data as `unknown`
+  return data; // safe
 }

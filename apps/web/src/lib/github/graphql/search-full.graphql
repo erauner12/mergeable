@@ -207,6 +207,12 @@ query searchFull($q: String!, $limit: Int!) {
           mergeQueueEntry {
             enqueuedAt
           }
+          headRefName
+          files(first: 2500) {
+            nodes {
+              path
+            }
+          }
         }
       }
     }

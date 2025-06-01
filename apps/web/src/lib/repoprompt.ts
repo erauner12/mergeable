@@ -84,18 +84,27 @@ export async function buildRepoPromptLink(
   const prompt = encodeURIComponent(promptPayload);
 
   // Encode **each** file but keep the commas intact (mirrors CLI behaviour)
-  const files = pull.files.map((f) => encodeURIComponent(f)).join(",");
-  const workspaceParam = `workspace=${encodeURIComponent(repo)}`; // Renamed from 'workspace' to avoid conflict
-
-  // Keep the canonical "/" after …open/
-  // const finalUrl = `repoprompt://open/${encodeURIComponent(
-  //   rootPath,
-  // )}?${workspaceParam}&focus=true&files=${files}&prompt=${prompt}`;
+  const filesParamValue = pull.files
+    .map((f) => encodeURIComponent(f))
+    .join(",");
+  const workspaceParam = `workspace=${encodeURIComponent(repo)}`;
 
   // When we set workspace=…, drop the path component from the URL base.
   // RepoPrompt uses the workspace param to identify the window/project.
   const base = "repoprompt://open";
-  const finalUrl = `${base}?${workspaceParam}&focus=true&files=${files}&prompt=${prompt}`;
+
+  const queryParts: string[] = [workspaceParam, "focus=true"];
+
+  if (filesParamValue.length) {
+    queryParts.push(`files=${filesParamValue}`);
+  }
+  // The prompt payload is URI encoded, so `prompt` variable will not be empty if payload is not empty.
+  // However, `encodeURIComponent("")` results in `""`, so an empty promptPayload will result in an empty `prompt`.
+  if (prompt.length) {
+    queryParts.push(`prompt=${prompt}`);
+  }
+
+  const finalUrl = `${base}?${queryParts.join("&")}`;
 
   logRepoPromptCall({
     rootPath,

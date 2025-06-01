@@ -34,11 +34,12 @@ describe("buildRepoPromptLink", () => {
     const link = await buildRepoPromptLink(pull);
 
     expect(settings.getDefaultRoot).toHaveBeenCalled();
-    expect(link).toContain("repoprompt://open/");
-    // Ensure the path part starts with a slash and is correctly encoded
-    expect(link).toContain(
-      `repoprompt://open/${encodeURIComponent("/tmp/myrepo")}`,
-    );
+    // Ensure the URL starts with repoprompt://open?workspace=... and does not include the encoded path part
+    // The repo name for "owner/myrepo" is "myrepo"
+    expect(link.startsWith(`repoprompt://open?workspace=${encodeURIComponent("myrepo")}`)).toBe(true);
+    // The rootPath itself is still used in the prompt, e.g., "cd /tmp/myrepo"
+    // So we cannot assert that encodeURIComponent("/tmp/myrepo") is not in the link at all.
+    // We only care that it's not in the `repoprompt://open/<path_part>` position.
 
     const params = new URLSearchParams(link.substring(link.indexOf("?") + 1));
     // files are URI-encoded individually; compare after decoding
@@ -75,6 +76,10 @@ describe("buildRepoPromptLink", () => {
     });
 
     const link = await buildRepoPromptLink(pull);
+    // Ensure the URL starts with repoprompt://open?workspace=...
+    // The repo name for "another/repo" is "repo"
+    expect(link.startsWith(`repoprompt://open?workspace=${encodeURIComponent("repo")}`)).toBe(true);
+
     const params = new URLSearchParams(link.substring(link.indexOf("?") + 1));
     const decodedPrompt = params.get("prompt") || ""; // Value is already decoded by get()
 
@@ -111,7 +116,11 @@ describe("buildRepoPromptLink", () => {
 
     const link = await buildRepoPromptLink(pull);
     const rootPath = "/projects/repo-name with spaces";
-    expect(link).toContain(`repoprompt://open/${encodeURIComponent(rootPath)}`);
+    // Ensure the URL starts with repoprompt://open?workspace=...
+    // The repo name for "user/repo-name with spaces" is "repo-name with spaces"
+    expect(link.startsWith(`repoprompt://open?workspace=${encodeURIComponent("repo-name with spaces")}`)).toBe(true);
+    // The rootPath is still part of the prompt content, e.g. "cd /projects/repo-name with spaces"
+    // expect(link).toContain(`repoprompt://open/${encodeURIComponent(rootPath)}`); // This assertion is no longer valid for the URL structure
 
     const params = new URLSearchParams(link.substring(link.indexOf("?") + 1));
     // files are URI-encoded individually; compare after decoding

@@ -17,6 +17,17 @@ Mergeable provides the following features:
 - Attention set, highlighting pull requests for which it is your turn to act.
 - Does not require any GitHub app to be installed.
 
+### Enhanced "Open in RepoPrompt" Integration
+Mergeable now offers a more powerful "Open in RepoPrompt" experience:
+- **Automatic Setup**: Includes commands to checkout the correct branch.
+- **Customizable Base Prompt**: Configure a base prompt template in settings (e.g., for review guidelines).
+- **Full Context**: The PR title, body, and the complete diff are pre-loaded into RepoPrompt.
+- **Pre-selected Files**: All changed files in the PR are automatically selected.
+- **Focused Workflow**: Leverages RepoPrompt's workspace feature for a streamlined experience.
+
+*(TODO: Add screenshot of RepoPrompt with pre-filled data)*
+*(TODO: Document the Base Prompt setting in the settings/user guide section)*
+
 ## Public instance
 
 You can use the public instance hosted at https://app.usemergeable.dev

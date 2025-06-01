@@ -3,7 +3,7 @@ import { useState } from "react";
 import type { Pull } from "../lib/github/types";
 import { toggleStar } from "../lib/mutations";
 import { useStars } from "../lib/queries";
-import { buildRepoPromptLink } from "../lib/repoprompt";
+import { buildRepoPromptLink, type LaunchMode } from "../lib/repoprompt";
 import { computeSize } from "../lib/size";
 import CopyToClipboardIcon from "./CopyToClipboardIcon";
 import IconWithTooltip from "./IconWithTooltip";
@@ -32,6 +32,19 @@ export default function PullRow({ pull, sizes }: PullRowProps) {
     e.stopPropagation();
     toggleStar(pull).catch(console.error);
   };
+
+  // 🔹 tiny helper so we don’t duplicate the try/catch
+  const openRepoPrompt = async (e: React.MouseEvent, mode: LaunchMode) => {
+    e.stopPropagation();
+    try {
+      const url = await buildRepoPromptLink(pull, mode);
+      window.open(url, "_blank");
+    } catch (err) {
+      console.error("Failed to build RepoPrompt link:", err);
+      // Optionally show a toast message to the user
+    }
+  };
+
   return (
     <tr
       onMouseEnter={() => setActive(true)}
@@ -54,19 +67,17 @@ export default function PullRow({ pull, sizes }: PullRowProps) {
           />
         )}
       </td>
-      <td
-        onClick={async (e) => {
-          e.stopPropagation();
-          try {
-            const url = await buildRepoPromptLink(pull);
-            window.open(url, "_blank");
-          } catch (error) {
-            console.error("Failed to build RepoPrompt link:", error);
-            // Optionally show a toast message to the user
-          }
-        }}
-      >
-        <IconWithTooltip icon="application" title="Open in RepoPrompt" />
+      {/* existing "workspace" button (updated behaviour) */}
+      <td onClick={(e) => openRepoPrompt(e, "workspace")}>
+        <IconWithTooltip
+          icon="application"
+          title="Open workspace in RepoPrompt"
+        />
+      </td>
+
+      {/* NEW – open *just* the folder (ephemeral workspace) */}
+      <td onClick={(e) => openRepoPrompt(e, "folder")}>
+        <IconWithTooltip icon="folder-open" title="Open folder (ephemeral)" />
       </td>
       <td>
         {pull.attention?.set && (

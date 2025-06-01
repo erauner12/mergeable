@@ -153,6 +153,7 @@ query search($q: String!, $limit: Int!) {
               }
             }
           }
+          headRefName
         }
       }
     }

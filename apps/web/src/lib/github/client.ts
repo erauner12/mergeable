@@ -61,6 +61,26 @@ type Actor =
   | undefined
   | null;
 
+export async function getPullRequestDiff(
+  owner: string,
+  repo: string,
+  number: number,
+  token?: string,
+): Promise<string> {
+  const octokit = token ? new Octokit({ auth: token }) : new Octokit(); // unauth → still fine for public repos
+  const { data } = await octokit.request(
+    "GET /repos/{owner}/{repo}/pulls/{pull_number}",
+    {
+      owner,
+      repo,
+      pull_number: number,
+      mediaType: { format: "diff" },
+    },
+  );
+  // The Octokit types might return the diff data as `unknown` when mediaType.format is 'diff'
+  return data as unknown as string;
+}
+
 export class DefaultGitHubClient implements GitHubClient {
   private octokits: Record<string, Octokit> = {};
 
@@ -381,4 +401,29 @@ export class DefaultGitHubClient implements GitHubClient {
       }
     }
   }
+}
+
+export async function getPullRequestMeta(
+  owner: string,
+  repo: string,
+  number: number,
+  token?: string,
+): Promise<{ branch: string; files: string[] }> {
+  const octokit = token ? new Octokit({ auth: token }) : new Octokit();
+
+  // branch name
+  const pr = await octokit.request(
+    "GET /repos/{owner}/{repo}/pulls/{pull_number}",
+    { owner, repo, pull_number: number },
+  );
+  const branch = pr.data.head.ref;
+
+  // changed files (may be paginated)
+  const filesResp = await octokit.paginate(
+    octokit.rest.pulls.listFiles,
+    { owner, repo, pull_number: number, per_page: 100 },
+  );
+  const files = filesResp.map((f) => f.filename);
+
+  return { branch, files };
 }

@@ -29,7 +29,7 @@ export default function Settings() {
 
   useEffect(() => {
     getDefaultRoot()
-      .then((root) => {
+      .then((root: string) => {
         setCloneRoot(root);
         setInitialCloneRoot(root);
       })

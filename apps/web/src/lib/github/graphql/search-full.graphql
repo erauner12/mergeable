@@ -207,6 +207,7 @@ query searchFull($q: String!, $limit: Int!) {
           mergeQueueEntry {
             enqueuedAt
           }
+          headRefName
         }
       }
     }

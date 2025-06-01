@@ -61,14 +61,13 @@ export async function buildRepoPromptLink(
   ].join("\n");
 
   const prompt = encodeURIComponent(promptPayload);
-  const files = encodeURIComponent(pull.files.join(","));
+
+  // Encode **each** file but keep the commas intact (mirrors CLI behaviour)
+  const files = pull.files.map((f) => encodeURIComponent(f)).join(",");
   const workspace = `workspace=${encodeURIComponent(repo)}`;
 
-  // Construct the final URL
-  // Note: The original implementation might have been different. This replaces it.
-  return [
-    "repoprompt://open",
-    encodeURIComponent(rootPath), // Path part of the URL
-    `?${workspace}&focus=true&files=${files}&prompt=${prompt}`, // Query parameters
-  ].join("");
+  // Keep the canonical "/" after …open/
+  return `repoprompt://open/${encodeURIComponent(
+    rootPath,
+  )}?${workspace}&focus=true&files=${files}&prompt=${prompt}`;
 }

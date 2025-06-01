@@ -1,8 +1,8 @@
 import { db } from "./db"; // Assumed import for Dexie instance
 
-export interface SettingsEntry {
+export interface SettingsEntry<T = unknown> {
   key: string;
-  value: any;
+  value: T;
 }
 
 /**
@@ -19,7 +19,7 @@ export async function setDefaultRoot(rootPath: string): Promise<void> {
   await db.settings.put({
     key: "defaultCloneRoot",
     value: rootPath,
-  } as SettingsEntry);
+  } as SettingsEntry<string>);
 }
 
 /**
@@ -39,5 +39,5 @@ export async function setBasePrompt(text: string): Promise<void> {
   await db.settings.put({
     key: "basePromptTemplate",
     value: text,
-  } as SettingsEntry);
+  } as SettingsEntry<string>);
 }

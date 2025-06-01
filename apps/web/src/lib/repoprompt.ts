@@ -2,14 +2,21 @@ import { getPullRequestDiff } from "./github/client";
 import type { Pull } from "./github/types";
 import { getBasePrompt, getDefaultRoot } from "./settings";
 
+/** The PR object we need here must expose the head-branch name. */
+type PullWithBranch = Pull & { branch: string };
+
 // Assuming 'Pull' type and 'getDefaultRoot' are defined or imported
 // export interface Pull { ... }
 // export async function getDefaultRoot(): Promise<string> { ... }
 
-export async function buildRepoPromptLink(pull: Pull): Promise<string> {
+export async function buildRepoPromptLink(
+  pull: PullWithBranch,
+): Promise<string> {
   const baseRoot = await getDefaultRoot();
+  // getDefaultRoot() is typed to return a string; keep a runtime guard
+  // but avoid template–literal interpolation to placate the linter.
   if (typeof baseRoot !== "string") {
-    throw new Error(`getDefaultRoot did not return a string: ${baseRoot}`);
+    throw new Error("getDefaultRoot did not return a string value");
   }
   const [owner, repo] = pull.repo.split("/");
   const rootPath = `${baseRoot}/${repo}`;
@@ -36,7 +43,7 @@ export async function buildRepoPromptLink(pull: Pull): Promise<string> {
     "```bash",
     `cd ${rootPath}`,
     "git fetch origin",
-    `git checkout ${pull.branch}`,
+    `git checkout ${pull.branch}`, // ✅ branch is now a string
     "```",
     "",
     basePrompt,

@@ -1,4 +1,4 @@
-import { getPullRequestDiff } from "./github/client";
+import { getPullRequestDiff, getPullRequestMeta } from "./github/client";
 import type { Pull } from "./github/types";
 import { getBasePrompt, getDefaultRoot } from "./settings";
 
@@ -42,6 +42,20 @@ export async function buildRepoPromptLink(
   const [owner, repo] = pull.repo.split("/");
   const rootPath = `${baseRoot}/${repo}`;
 
+  // Ensure branch and files are populated
+  let { branch, files } = pull; // Use local vars that might be updated
+
+  if (!branch || files.length === 0) {
+    // Fetch metadata if branch is empty or files list is empty
+    const meta = await getPullRequestMeta(
+      owner,
+      repo,
+      pull.number /*, token? */,
+    );
+    branch = branch || meta.branch; // If original branch was empty, use fetched.
+    files = files.length ? files : meta.files; // If original files was empty, use fetched.
+  }
+
   // ①  Fetch diff (may be large)
   let diff = await getPullRequestDiff(
     owner,
@@ -64,7 +78,7 @@ export async function buildRepoPromptLink(
     "```bash",
     `cd ${rootPath}`,
     "git fetch origin",
-    `git checkout ${pull.branch}`, // ✅ branch is now a string
+    `git checkout ${branch}`, // Use local 'branch' variable
     "```",
     "",
     basePrompt,
@@ -84,7 +98,7 @@ export async function buildRepoPromptLink(
   const prompt = encodeURIComponent(promptPayload);
 
   // Encode **each** file but keep the commas intact (mirrors CLI behaviour)
-  const filesParamValue = pull.files
+  const filesParamValue = files // Use local 'files' variable
     .map((f) => encodeURIComponent(f))
     .join(",");
   const workspaceParam = `workspace=${encodeURIComponent(repo)}`;
@@ -93,24 +107,27 @@ export async function buildRepoPromptLink(
   // RepoPrompt uses the workspace param to identify the window/project.
   const base = "repoprompt://open";
 
-  const queryParts: string[] = [workspaceParam, "focus=true"];
+  const queryParamsArray: string[] = [];
+  queryParamsArray.push(workspaceParam);
+  queryParamsArray.push("focus=true");
 
-  if (filesParamValue.length) {
-    queryParts.push(`files=${filesParamValue}`);
+  if (files.length > 0) {
+    // Use local 'files' variable
+    queryParamsArray.push(`files=${filesParamValue}`);
   }
   // The prompt payload is URI encoded, so `prompt` variable will not be empty if payload is not empty.
   // However, `encodeURIComponent("")` results in `""`, so an empty promptPayload will result in an empty `prompt`.
   if (prompt.length) {
-    queryParts.push(`prompt=${prompt}`);
+    queryParamsArray.push(`prompt=${prompt}`);
   }
 
-  const finalUrl = `${base}?${queryParts.join("&")}`;
+  const finalUrl = `${base}?${queryParamsArray.join("&")}`;
 
   logRepoPromptCall({
     rootPath,
     workspace: repo,
-    branch: pull.branch,
-    files: pull.files,
+    branch: branch, // Use local 'branch' variable
+    files: files, // Use local 'files' variable
     flags: { focus: true /* future: persist / ephemeral etc. */ },
     promptPreview:
       promptPayload.length > 120

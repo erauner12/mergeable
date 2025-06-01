@@ -142,4 +142,44 @@ describe("buildRepoPromptLink", () => {
     expect(decodedPrompt).toContain("dummy diff content");
     expect(decodedPrompt.trim().endsWith(`🔗 ${pull.url}`)).toBe(true);
   });
+
+  // ✅ NEW – verifies branch/files are fetched when missing
+  it("fills missing branch & files via getPullRequestMeta()", async () => {
+    // 1️⃣  Fake GitHub REST reply
+    vi.spyOn(gh, "getPullRequestMeta").mockResolvedValue({
+      branch: "fallback-branch",
+      files: ["src/a.ts", "README.md"],
+    });
+    // Still stub the diff endpoint
+    // getPullRequestDiff is already spied on in beforeEach, but it's fine to re-spy if needed,
+    // or rely on the beforeEach spy. For clarity, let's assume beforeEach covers it.
+    // If not, it would be: vi.spyOn(gh, "getPullRequestDiff").mockResolvedValue("dummy diff content");
+
+    vi.spyOn(settings, "getDefaultRoot").mockResolvedValue("/tmp");
+    vi.spyOn(settings, "getBasePrompt").mockResolvedValue("BASE");
+
+    // 2️⃣  Start with NO branch and NO files
+    const pull = mockPull({
+      repo: "owner/repo",
+      number: 99,
+      title: "Empty meta PR",
+      body: "",
+      branch: "",      // intentionally empty
+      files: [],       // intentionally empty
+    });
+
+    const url = await buildRepoPromptLink(pull);
+
+    // 3️⃣  Expectations --------------------------------------------------------
+    // helper must be called
+    expect(gh.getPullRequestMeta).toHaveBeenCalledWith("owner", "repo", 99);
+
+    const params = new URLSearchParams(url.substring(url.indexOf("?") + 1));
+    expect(params.get("files")!.split(",").map(decodeURIComponent)).toEqual([
+      "src/a.ts",
+      "README.md",
+    ]);
+    const prompt = params.get("prompt")!;
+    expect(prompt).toContain("git checkout fallback-branch");
+  });
 });

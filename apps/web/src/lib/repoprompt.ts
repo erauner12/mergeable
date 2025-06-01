@@ -2,6 +2,27 @@ import { getPullRequestDiff } from "./github/client";
 import type { Pull } from "./github/types";
 import { getBasePrompt, getDefaultRoot } from "./settings";
 
+/** Helper to keep test output clean */
+const isTestEnv = () =>
+  typeof process !== "undefined" && process.env.NODE_ENV === "test";
+
+/** Pretty-print the parameters we’re about to hand to RepoPrompt */
+function logRepoPromptCall(details: {
+  rootPath: string;
+  workspace: string;
+  branch: string;
+  files: string[];
+  flags: Record<string, boolean | undefined>;
+  promptPreview: string;
+}) {
+  // Print as a single object so it’s collapsible in DevTools
+  // (skip when running Vitest to avoid noisy snapshots)
+  if (!isTestEnv()) {
+    // eslint-disable-next-line no-console
+    console.info("[RepoPrompt] Launch parameters:", details);
+  }
+}
+
 /** The PR object we need here must expose the head-branch name. */
 type PullWithBranch = Pull & { branch: string };
 
@@ -67,7 +88,21 @@ export async function buildRepoPromptLink(
   const workspace = `workspace=${encodeURIComponent(repo)}`;
 
   // Keep the canonical "/" after …open/
-  return `repoprompt://open/${encodeURIComponent(
+  const finalUrl = `repoprompt://open/${encodeURIComponent(
     rootPath,
   )}?${workspace}&focus=true&files=${files}&prompt=${prompt}`;
+
+  logRepoPromptCall({
+    rootPath,
+    workspace: repo,
+    branch: pull.branch,
+    files: pull.files,
+    flags: { focus: true /* future: persist / ephemeral etc. */ },
+    promptPreview:
+      promptPayload.length > 120
+        ? `${promptPayload.slice(0, 120)}…`
+        : promptPayload,
+  });
+
+  return finalUrl;
 }

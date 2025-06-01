@@ -58,7 +58,7 @@ export type PullProps = {
   repo: string;
   number: number;
   title: string;
-  body: string;
+  body: string | null;
   state: PullState;
   checkState: CheckState;
   queueState?: QueueState;
@@ -76,8 +76,10 @@ export type PullProps = {
   requestedReviewers: User[];
   requestedTeams: Team[];
   reviews: Review[];
-  checks: Check[];
   discussions: Discussion[];
+  checks: Check[];
+  branch: string;
+  files: string[];
 };
 
 export type Attention = {

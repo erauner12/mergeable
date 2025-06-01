@@ -1,13 +1,14 @@
-import { Tooltip, Tag, Icon } from "@blueprintjs/core";
-import TimeAgo from "./TimeAgo";
-import type { Pull } from "../lib/github/types";
-import IconWithTooltip from "./IconWithTooltip";
-import { computeSize } from "../lib/size";
-import styles from "./PullRow.module.scss";
+import { Icon, Tag, Tooltip } from "@blueprintjs/core";
 import { useState } from "react";
-import CopyToClipboardIcon from "./CopyToClipboardIcon";
+import type { Pull } from "../lib/github/types";
 import { toggleStar } from "../lib/mutations";
 import { useStars } from "../lib/queries";
+import { buildRepoPromptLink } from "../lib/repoprompt";
+import { computeSize } from "../lib/size";
+import CopyToClipboardIcon from "./CopyToClipboardIcon";
+import IconWithTooltip from "./IconWithTooltip";
+import styles from "./PullRow.module.scss";
+import TimeAgo from "./TimeAgo";
 
 export interface PullRowProps {
   pull: Pull;
@@ -52,6 +53,20 @@ export default function PullRow({ pull, sizes }: PullRowProps) {
             className={styles.star}
           />
         )}
+      </td>
+      <td
+        onClick={async (e) => {
+          e.stopPropagation();
+          try {
+            const url = await buildRepoPromptLink(pull);
+            window.open(url, "_blank");
+          } catch (error) {
+            console.error("Failed to build RepoPrompt link:", error);
+            // Optionally show a toast message to the user
+          }
+        }}
+      >
+        <IconWithTooltip icon="application" title="Open in RepoPrompt" />
       </td>
       <td>
         {pull.attention?.set && (

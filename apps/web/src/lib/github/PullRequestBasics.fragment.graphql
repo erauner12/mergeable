@@ -1,0 +1,24 @@
+fragment PullRequestBasics on PullRequest {
+  # ... existing fields like id, title, number, url, etc.
+  id
+  title
+  number
+  url
+  state
+  isDraft
+  merged
+  closed
+  # ... other existing fields from your PullRequestBasics fragment
+
+  # Add these new fields:
+  headRefName # branch name (string)
+  files(first: 100) { # list changed paths (GitHub max for one page)
+    nodes {
+      path
+    }
+  }
+  # ... any other fields you might have in PullRequestBasics
+}
+
+# Ensure this fragment is used by your GraphQL operations that fetch pull request data.
+# For example, if you have SearchQuery or SearchFullQuery, they should utilize this fragment.

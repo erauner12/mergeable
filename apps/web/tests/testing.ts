@@ -1,6 +1,6 @@
 import type { Endpoint, GitHubClient } from "../src/lib/github/client";
-import type { Profile, PullProps, Pull } from "../src/lib/github/types";
-import type { Section, Connection } from "../src/lib/types";
+import type { Profile, Pull, PullProps } from "../src/lib/github/types";
+import type { Connection, Section } from "../src/lib/types";
 
 export function mockPull(props?: Omit<Partial<Pull>, "uid" | "url">): Pull {
   const id = props?.id ?? "PR_1";
@@ -29,6 +29,8 @@ export function mockPull(props?: Omit<Partial<Pull>, "uid" | "url">): Pull {
     discussions: [],
     checks: [],
     labels: [],
+    branch: props?.branch ?? "main",
+    files: props?.files ?? ["file1.ts", "file2.md"],
     uid: `${connection}:${id}`,
     host,
     sections: [],

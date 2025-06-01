@@ -31,17 +31,22 @@ describe("buildRepoPromptLink", () => {
       files: ["src/main.ts", "README.md"],
     });
 
-    const link = await buildRepoPromptLink(pull);
+    const link = await buildRepoPromptLink(pull, "workspace"); // Explicitly pass "workspace"
 
     expect(settings.getDefaultRoot).toHaveBeenCalled();
     // Ensure the URL starts with repoprompt://open?workspace=... and does not include the encoded path part
     // The repo name for "owner/myrepo" is "myrepo"
-    expect(link.startsWith(`repoprompt://open?workspace=${encodeURIComponent("myrepo")}`)).toBe(true);
-    // The rootPath itself is still used in the prompt, e.g., "cd /tmp/myrepo"
-    // So we cannot assert that encodeURIComponent("/tmp/myrepo") is not in the link at all.
-    // We only care that it's not in the `repoprompt://open/<path_part>` position.
+    // expect(link.startsWith(`repoprompt://open?workspace=${encodeURIComponent("myrepo")}`)).toBe(true); // Old assertion
 
-    const params = new URLSearchParams(link.substring(link.indexOf("?") + 1));
+    const urlObj = new URL(link);
+    expect(urlObj.protocol).toBe("repoprompt:");
+    expect(urlObj.host).toBe("open");
+    expect(urlObj.pathname).toBe(""); // Workspace mode deliberately omits the path
+
+    const params = urlObj.searchParams;
+    expect(params.get("workspace")).toBe("myrepo");
+    expect(params.get("ephemeral")).toBe("false");
+    expect(params.get("focus")).toBe("true");
     // files are URI-encoded individually; compare after decoding
     expect(params.get("files")!.split(",").map(decodeURIComponent)).toEqual([
       "src/main.ts",
@@ -75,12 +80,20 @@ describe("buildRepoPromptLink", () => {
       files: ["path/to/file.js"],
     });
 
-    const link = await buildRepoPromptLink(pull);
+    const link = await buildRepoPromptLink(pull, "workspace"); // Explicitly pass "workspace"
     // Ensure the URL starts with repoprompt://open?workspace=...
     // The repo name for "another/repo" is "repo"
-    expect(link.startsWith(`repoprompt://open?workspace=${encodeURIComponent("repo")}`)).toBe(true);
+    // expect(link.startsWith(`repoprompt://open?workspace=${encodeURIComponent("repo")}`)).toBe(true); // Old assertion
 
-    const params = new URLSearchParams(link.substring(link.indexOf("?") + 1));
+    const urlObj = new URL(link);
+    expect(urlObj.protocol).toBe("repoprompt:");
+    expect(urlObj.host).toBe("open");
+    expect(urlObj.pathname).toBe(""); // Workspace mode deliberately omits the path
+
+    const params = urlObj.searchParams;
+    expect(params.get("workspace")).toBe("repo");
+    expect(params.get("ephemeral")).toBe("false");
+    expect(params.get("focus")).toBe("true");
     const decodedPrompt = params.get("prompt") || ""; // Value is already decoded by get()
 
     // files are URI-encoded individually; compare after decoding
@@ -114,15 +127,23 @@ describe("buildRepoPromptLink", () => {
       files: ["file with spaces.txt", "another&file.py"],
     });
 
-    const link = await buildRepoPromptLink(pull);
+    const link = await buildRepoPromptLink(pull, "workspace"); // Explicitly pass "workspace"
     const rootPath = "/projects/repo-name with spaces";
     // Ensure the URL starts with repoprompt://open?workspace=...
     // The repo name for "user/repo-name with spaces" is "repo-name with spaces"
-    expect(link.startsWith(`repoprompt://open?workspace=${encodeURIComponent("repo-name with spaces")}`)).toBe(true);
+    // expect(link.startsWith(`repoprompt://open?workspace=${encodeURIComponent("repo-name with spaces")}`)).toBe(true); // Old assertion
     // The rootPath is still part of the prompt content, e.g. "cd /projects/repo-name with spaces"
     // expect(link).toContain(`repoprompt://open/${encodeURIComponent(rootPath)}`); // This assertion is no longer valid for the URL structure
 
-    const params = new URLSearchParams(link.substring(link.indexOf("?") + 1));
+    const urlObj = new URL(link);
+    expect(urlObj.protocol).toBe("repoprompt:");
+    expect(urlObj.host).toBe("open");
+    expect(urlObj.pathname).toBe(""); // Workspace mode deliberately omits the path
+
+    const params = urlObj.searchParams;
+    expect(params.get("workspace")).toBe("repo-name with spaces");
+    expect(params.get("ephemeral")).toBe("false");
+    expect(params.get("focus")).toBe("true");
     // files are URI-encoded individually; compare after decoding
     expect(params.get("files")!.split(",").map(decodeURIComponent)).toEqual([
       "file with spaces.txt",
@@ -164,22 +185,61 @@ describe("buildRepoPromptLink", () => {
       number: 99,
       title: "Empty meta PR",
       body: "",
-      branch: "",      // intentionally empty
-      files: [],       // intentionally empty
+      branch: "", // intentionally empty
+      files: [], // intentionally empty
     });
 
-    const url = await buildRepoPromptLink(pull);
+    const url = await buildRepoPromptLink(pull, "workspace"); // Explicitly pass "workspace"
 
     // 3️⃣  Expectations --------------------------------------------------------
     // helper must be called
     expect(gh.getPullRequestMeta).toHaveBeenCalledWith("owner", "repo", 99);
 
-    const params = new URLSearchParams(url.substring(url.indexOf("?") + 1));
+    const urlObj = new URL(url);
+    expect(urlObj.protocol).toBe("repoprompt:");
+    expect(urlObj.host).toBe("open");
+    expect(urlObj.pathname).toBe(""); // Workspace mode deliberately omits the path
+
+    const params = urlObj.searchParams;
+    expect(params.get("workspace")).toBe("repo");
+    expect(params.get("ephemeral")).toBe("false");
+    expect(params.get("focus")).toBe("true");
     expect(params.get("files")!.split(",").map(decodeURIComponent)).toEqual([
       "src/a.ts",
       "README.md",
     ]);
     const prompt = params.get("prompt")!;
     expect(prompt).toContain("git checkout fallback-branch");
+  });
+
+  it("builds folder-mode URL (ephemeral)", async () => {
+    vi.spyOn(settings, "getDefaultRoot").mockResolvedValue("/tmp");
+    vi.spyOn(settings, "getBasePrompt").mockResolvedValue("BASE");
+    // getPullRequestDiff is spied in beforeEach
+    // vi.spyOn(gh, "getPullRequestDiff").mockResolvedValue("diff");
+    const pull = mockPull({
+      repo: "acme/foo",
+      number: 1,
+      branch: "main",
+      files: ["a.ts"],
+    });
+
+    const link = await buildRepoPromptLink(pull, "folder");
+
+    const urlObj = new URL(link);
+    expect(urlObj.protocol).toBe("repoprompt:");
+    expect(urlObj.host).toBe("open");
+    expect(urlObj.pathname).toBe("/%2Ftmp%2Ffoo"); // path segment present and encoded
+
+    const params = urlObj.searchParams;
+    expect(params.get("ephemeral")).toBe("true");
+    expect(params.get("focus")).toBe("true");
+    expect(params.has("workspace")).toBe(false); // no workspace flag
+    expect(params.get("files")!.split(",").map(decodeURIComponent)).toEqual([
+      "a.ts",
+    ]);
+    const prompt = params.get("prompt")!;
+    expect(prompt).toContain("cd /tmp/foo");
+    expect(prompt).toContain("git checkout main");
   });
 });

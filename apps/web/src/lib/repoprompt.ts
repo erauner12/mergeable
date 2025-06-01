@@ -2,6 +2,8 @@ import { getPullRequestDiff, getPullRequestMeta } from "./github/client";
 import type { Pull } from "./github/types";
 import { getBasePrompt, getDefaultRoot } from "./settings";
 
+export type LaunchMode = "workspace" | "folder";
+
 /** Helper to keep test output clean */
 const isTestEnv = () =>
   typeof process !== "undefined" && process.env.NODE_ENV === "test";
@@ -32,6 +34,7 @@ type PullWithBranch = Pull & { branch: string };
 
 export async function buildRepoPromptLink(
   pull: PullWithBranch,
+  mode: LaunchMode = "workspace", // 👈 default keeps current behaviour
 ): Promise<string> {
   const baseRoot = await getDefaultRoot();
   // getDefaultRoot() is typed to return a string; keep a runtime guard
@@ -101,27 +104,44 @@ export async function buildRepoPromptLink(
   const filesParamValue = files // Use local 'files' variable
     .map((f) => encodeURIComponent(f))
     .join(",");
-  const workspaceParam = `workspace=${encodeURIComponent(repo)}`;
+  // const workspaceParam = `workspace=${encodeURIComponent(repo)}`; // Removed, handled by mode
 
   // When we set workspace=…, drop the path component from the URL base.
   // RepoPrompt uses the workspace param to identify the window/project.
-  const base = "repoprompt://open";
+  // const base = "repoprompt://open"; // Removed, handled by mode
 
-  const queryParamsArray: string[] = [];
-  queryParamsArray.push(workspaceParam);
-  queryParamsArray.push("focus=true");
+  // const queryParamsArray: string[] = []; // Renamed to query
+  // queryParamsArray.push(workspaceParam);
+  // queryParamsArray.push("focus=true");
+
+  // ──────────────────────────────────────────────────────────────
+  // 5️⃣  Build query & base URL according to requested mode
+  // ──────────────────────────────────────────────────────────────
+  const query: string[] = ["focus=true"]; // common flag
+  let base: string; // <—— was const
+
+  if (mode === "workspace") {
+    base = "repoprompt://open";
+    query.push(`workspace=${encodeURIComponent(repo)}`);
+    query.push("ephemeral=false"); // explicit – avoid surprises
+  } else {
+    //  mode === "folder"
+    base = `repoprompt://open/${encodeURIComponent(rootPath)}`;
+    query.push("ephemeral=true"); // throw-away session
+  }
 
   if (files.length > 0) {
     // Use local 'files' variable
-    queryParamsArray.push(`files=${filesParamValue}`);
+    query.push(`files=${filesParamValue}`);
   }
   // The prompt payload is URI encoded, so `prompt` variable will not be empty if payload is not empty.
   // However, `encodeURIComponent("")` results in `""`, so an empty promptPayload will result in an empty `prompt`.
   if (prompt.length) {
-    queryParamsArray.push(`prompt=${prompt}`);
+    query.push(`prompt=${prompt}`);
   }
 
-  const finalUrl = `${base}?${queryParamsArray.join("&")}`;
+  query.sort(); // deterministic ordering
+  const finalUrl = `${base}?${query.join("&")}`;
 
   logRepoPromptCall({
     rootPath,

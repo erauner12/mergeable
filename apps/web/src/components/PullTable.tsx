@@ -41,7 +41,9 @@ export default function PullTable({ pulls, sizes }: PullTableProps) {
           <th>&nbsp;</th>
           {/* Star */}
           <th>&nbsp;</th>
-          {/* RepoPrompt column header (blank icon) */}
+          {/* RepoPrompt column header (workspace btn) */}
+          <th>&nbsp;</th>
+          {/* RepoPrompt column header (folder btn) */}
           <th>&nbsp;</th>
           {/* Attention flag */}
           <th>Author</th>

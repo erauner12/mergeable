@@ -47,7 +47,7 @@ describe("buildRepoPromptLink", () => {
       "README.md",
     ]);
 
-    const decodedPrompt = decodeURIComponent(params.get("prompt")!);
+    const decodedPrompt = params.get("prompt")!; // Value is already decoded by get()
     expect(decodedPrompt).toContain("## SETUP");
     expect(decodedPrompt).toContain("cd /tmp/myrepo");
     expect(decodedPrompt).toContain("git checkout feature-branch");
@@ -76,7 +76,7 @@ describe("buildRepoPromptLink", () => {
 
     const link = await buildRepoPromptLink(pull);
     const params = new URLSearchParams(link.substring(link.indexOf("?") + 1));
-    const decodedPrompt = decodeURIComponent(params.get("prompt") || "");
+    const decodedPrompt = params.get("prompt") || ""; // Value is already decoded by get()
 
     // files are URI-encoded individually; compare after decoding
     expect(params.get("files")!.split(",").map(decodeURIComponent)).toEqual([
@@ -120,7 +120,7 @@ describe("buildRepoPromptLink", () => {
       "another&file.py",
     ]);
 
-    const decodedPrompt = decodeURIComponent(params.get("prompt") || "");
+    const decodedPrompt = params.get("prompt") || ""; // Value is already decoded by get()
     expect(decodedPrompt).toContain("## SETUP");
     expect(decodedPrompt).toContain(`cd ${rootPath}`); // rootPath already contains spaces
     expect(decodedPrompt).toContain("git checkout branch/with/slashes");

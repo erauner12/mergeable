@@ -208,11 +208,6 @@ query searchFull($q: String!, $limit: Int!) {
             enqueuedAt
           }
           headRefName
-          files(first: 2500) {
-            nodes {
-              path
-            }
-          }
         }
       }
     }

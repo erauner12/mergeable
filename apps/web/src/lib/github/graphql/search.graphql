@@ -154,9 +154,6 @@ query search($q: String!, $limit: Int!) {
             }
           }
           headRefName
-          files(first: 2500) {
-            nodes { path }
-          }
         }
       }
     }

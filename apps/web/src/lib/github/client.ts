@@ -154,11 +154,9 @@ export class DefaultGitHubClient implements GitHubClient {
     // NEW code:
     const edges = data.search.edges?.filter(isNonNull) ?? [];
     const pulls = edges
-        .filter(
-          (e): e is { node: PullRequestNode } =>
-            !!e && isPullRequestNode(e.node)
-        )
-        .map(e => this.makePull(e.node));
+        .map(edge => edge.node) // Extract node first
+        .filter(isPullRequestNode) // Filter for PullRequestNode
+        .map(prNode => this.makePull(prNode)); // Now prNode is correctly typed
     return pulls;
   }
 

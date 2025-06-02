@@ -32,7 +32,8 @@ export function makeThreadBlock(
   path: string,
   line: number,
   hunk: string | undefined,
-  comments: IndividualCommentData[] // Sorted individual comments
+  comments: IndividualCommentData[], // Sorted individual comments
+  resolved: boolean,
 ): CommentBlockInput {
   if (comments.length === 0) {
     // This case should ideally be prevented by the caller
@@ -56,6 +57,7 @@ export function makeThreadBlock(
         diffHunk: hunk,
         filePath: path,
         line: line,
+        resolved: false, // Default for empty/error case
     };
   }
 
@@ -75,5 +77,6 @@ export function makeThreadBlock(
     diffHunk: hunk,
     filePath: path,
     line: line,
+    resolved: resolved,
   };
 }

@@ -148,6 +148,7 @@ export async function buildRepoPromptUrl(
       repo,
       pull.number,
       token,
+      endpoint?.baseUrl, // Pass baseUrl
     );
     branch = branch || metaFromGithub.branch;
     files = files.length ? files : metaFromGithub.files;
@@ -232,7 +233,13 @@ export async function buildRepoPromptText(
 
   // 2. Full PR Diff
   if (diffOptions.includePr) {
-    const prDiff = await getPullRequestDiff(owner, repo, pull.number, token);
+    const prDiff = await getPullRequestDiff(
+      owner,
+      repo,
+      pull.number,
+      token,
+      endpoint?.baseUrl, // Pass baseUrl
+    );
     if (prDiff.trim()) {
       const block: DiffBlockInput = {
         id: `diff-pr-${pull.id}`,
@@ -247,7 +254,14 @@ export async function buildRepoPromptText(
 
   // 3. Last Commit Diff
   if (diffOptions.includeLastCommit) {
-    const prCommits = await listPrCommits(owner, repo, pull.number, 1, token);
+    const prCommits = await listPrCommits(
+      owner,
+      repo,
+      pull.number,
+      1,
+      token,
+      endpoint?.baseUrl, // Pass baseUrl
+    );
     if (prCommits.length > 0) {
       const lastCommit = prCommits[0];
       if (lastCommit && lastCommit.sha) {
@@ -256,6 +270,7 @@ export async function buildRepoPromptText(
           repo,
           lastCommit.sha,
           token,
+          endpoint?.baseUrl, // Pass baseUrl
         );
         if (lastCommitDiff.trim()) {
           const shortSha = lastCommit.sha.slice(0, 7);
@@ -289,6 +304,7 @@ export async function buildRepoPromptText(
       pull.number,
       250, // Default limit for fetching commit messages
       token,
+      endpoint?.baseUrl, // Pass baseUrl
     );
     const commitMessageMap = new Map(
       allPrCommitsForMessages.map((c) => [
@@ -298,7 +314,13 @@ export async function buildRepoPromptText(
     );
 
     for (const sha of diffOptions.commits) {
-      const commitDiff = await getCommitDiff(owner, repo, sha, token);
+      const commitDiff = await getCommitDiff(
+        owner,
+        repo,
+        sha,
+        token,
+        endpoint?.baseUrl, // Pass baseUrl
+      );
       if (commitDiff.trim()) {
         const shortSha = sha.slice(0, 7);
         const commitTitle =

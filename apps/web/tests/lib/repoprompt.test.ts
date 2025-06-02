@@ -106,6 +106,7 @@ describe("buildRepoPromptUrl", () => {
       "anotherrepo",
       456,
       undefined,
+      undefined, // Add undefined for baseUrl
     );
     expect(resolvedMeta.branch).toBe("fetched-branch");
     expect(resolvedMeta.files).toEqual(["file1.txt", "file2.js"]);
@@ -236,6 +237,7 @@ describe("buildRepoPromptText", () => {
       "myrepo",
       123,
       undefined,
+      undefined, // Add undefined for baseUrl
     );
     expect(blocks.length).toBe(2); // PR Details + PR Diff
     const diffBlock = blocks.find(b => b.kind === "diff"); // Find by kind first

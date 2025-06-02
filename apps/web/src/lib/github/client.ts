@@ -79,8 +79,11 @@ export async function getPullRequestDiff(
   repo: string,
   number: number,
   token?: string,
+  baseUrl?: string, // New parameter
 ): Promise<string> {
-  const octokit = token ? new Octokit({ auth: token }) : new Octokit(); // unauth → still fine for public repos
+  const octokit = token
+    ? new Octokit({ auth: token, baseUrl: baseUrl ?? "https://api.github.com" }) // Updated Octokit instantiation
+    : new Octokit({ baseUrl: baseUrl ?? "https://api.github.com" }); // Also handle unauthenticated case with baseUrl
   const { data } = (await octokit.request(
     "GET /repos/{owner}/{repo}/pulls/{pull_number}",
     {
@@ -380,23 +383,22 @@ export class DefaultGitHubClient implements GitHubClient {
         hasLatestOpinionatedReviews(prNode) &&
         prNode.latestOpinionatedReviews?.nodes
           ? (() => {
-              const reviews = prNode.latestOpinionatedReviews.nodes?.filter(
-                (n): n is NonNullable<(typeof prNode.latestOpinionatedReviews.nodes)[number]> =>
-                  isNonNull(n),
-              ) ?? [];
+              const reviews =
+                prNode.latestOpinionatedReviews.nodes?.filter(
+                  (
+                    n,
+                  ): n is NonNullable<
+                    (typeof prNode.latestOpinionatedReviews.nodes)[number]
+                  > => isNonNull(n),
+                ) ?? [];
               return (
                 reviews
-                  ?.filter(
-                    (n) =>
-                      n.state !== PullRequestReviewState.Pending,
-                  )
-                  .map(
-                    (n) => ({
-                      author: this.makeUser(n.author),
-                      collaborator: n.authorCanPushToRepository,
-                      approved: n.state === PullRequestReviewState.Approved,
-                    }),
-                  ) ?? []
+                  ?.filter((n) => n.state !== PullRequestReviewState.Pending)
+                  .map((n) => ({
+                    author: this.makeUser(n.author),
+                    collaborator: n.authorCanPushToRepository,
+                    approved: n.state === PullRequestReviewState.Approved,
+                  })) ?? []
               );
             })()
           : [],
@@ -588,8 +590,11 @@ export async function getPullRequestMeta(
   repo: string,
   number: number,
   token?: string,
+  baseUrl?: string, // New parameter
 ): Promise<{ branch: string; files: string[] }> {
-  const octokit = token ? new Octokit({ auth: token }) : new Octokit();
+  const octokit = token
+    ? new Octokit({ auth: token, baseUrl: baseUrl ?? "https://api.github.com" }) // Updated Octokit instantiation
+    : new Octokit({ baseUrl: baseUrl ?? "https://api.github.com" }); // Also handle unauthenticated case with baseUrl
 
   // branch name
   const { data: pr } = (await octokit.request(
@@ -624,9 +629,12 @@ export async function listPrCommits(
   pull_number: number,
   limit = 250, // Default to fetching up to 250 newest commits
   token?: string,
+  baseUrl?: string, // New parameter
 ): Promise<PullRequestCommit[]> {
   // TODO: Use proper Octokit commit type: Endpoints["GET /repos/{owner}/{repo}/pulls/{pull_number}/commits"]["response"]["data"]
-  const octokit = token ? new Octokit({ auth: token }) : new Octokit();
+  const octokit = token
+    ? new Octokit({ auth: token, baseUrl: baseUrl ?? "https://api.github.com" }) // Updated Octokit instantiation
+    : new Octokit({ baseUrl: baseUrl ?? "https://api.github.com" }); // Also handle unauthenticated case with baseUrl
   const commits = (await octokit.paginate(octokit.rest.pulls.listCommits, {
     owner,
     repo,
@@ -646,8 +654,11 @@ export async function getCommitDiff(
   repo: string,
   sha: string,
   token?: string,
+  baseUrl?: string, // New parameter
 ): Promise<string> {
-  const octokit = token ? new Octokit({ auth: token }) : new Octokit();
+  const octokit = token
+    ? new Octokit({ auth: token, baseUrl: baseUrl ?? "https://api.github.com" }) // Updated Octokit instantiation
+    : new Octokit({ baseUrl: baseUrl ?? "https://api.github.com" }); // Also handle unauthenticated case with baseUrl
   const { data } = (await octokit.request(
     "GET /repos/{owner}/{repo}/commits/{commit_sha}",
     {

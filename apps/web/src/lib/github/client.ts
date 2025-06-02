@@ -50,6 +50,12 @@ export type PullRequestCommit =
 type ReviewCommentItem =
   Endpoints["GET /repos/{owner}/{repo}/pulls/{pull_number}/comments"]["response"]["data"][number];
 
+// Extended type for the response of fetching a single pull request comment, including 'is_resolved'
+type PullRequestCommentSingleWithResolution =
+  Endpoints["GET /repos/{owner}/{repo}/pulls/comments/{comment_id}"]["response"]["data"] & {
+    is_resolved?: boolean;
+  };
+
 export type Endpoint = {
   auth: string;
   baseUrl: string;
@@ -351,7 +357,7 @@ export class DefaultGitHubClient implements GitHubClient {
           .then((response) => {
             // Assuming 'is_resolved' is available on response.data as per plan.
             // Standard Octokit types do not include this for this endpoint.
-            return (response.data as any)?.is_resolved === true;
+            return (response.data as PullRequestCommentSingleWithResolution)?.is_resolved === true;
           })
           .catch((err) => {
             console.warn(

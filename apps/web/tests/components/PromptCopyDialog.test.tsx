@@ -125,7 +125,8 @@ describe("PromptCopyDialog with FileDiffPicker integration", () => {
     );
 
     expect(screen.getByText("### PR Diff")).toBeInTheDocument();
-    expect(screen.getByText("Choose files…")).toBeInTheDocument();
+    // expect(screen.getByText("Choose files…")).toBeInTheDocument(); // Original
+    expect(screen.getByTestId("choose-files-diff-1")).toBeInTheDocument(); // MODIFIED
     expect(screen.getByText("(All 2 files)")).toBeInTheDocument(); // file1.txt, file2.txt
   });
 
@@ -140,7 +141,7 @@ describe("PromptCopyDialog with FileDiffPicker integration", () => {
       />,
     );
 
-    fireEvent.click(screen.getByText("Choose files…"));
+    fireEvent.click(screen.getByTestId("choose-files-diff-1")); // MODIFIED
     expect(screen.getByText("FileDiffPickerMock")).toBeInTheDocument();
     expect(
       screen.getByText("Title: Choose files for: My Awesome PR"),
@@ -170,7 +171,7 @@ describe("PromptCopyDialog with FileDiffPicker integration", () => {
     );
 
     // Open picker and select 1 file
-    fireEvent.click(screen.getByText("Choose files…"));
+    fireEvent.click(screen.getByTestId("choose-files-diff-1")); // MODIFIED
     fireEvent.click(screen.getByText("Confirm Picker (1 file)"));
     await waitFor(() =>
       expect(screen.queryByText("FileDiffPickerMock")).not.toBeInTheDocument(),
@@ -217,7 +218,7 @@ describe("PromptCopyDialog with FileDiffPicker integration", () => {
       />,
     );
 
-    fireEvent.click(screen.getByText("Choose files…"));
+    fireEvent.click(screen.getByTestId("choose-files-diff-1")); // MODIFIED
     fireEvent.click(screen.getByText("Confirm Picker (1 file)"));
     await waitFor(() =>
       expect(screen.queryByText("FileDiffPickerMock")).not.toBeInTheDocument(),
@@ -262,8 +263,8 @@ describe("PromptCopyDialog with FileDiffPicker integration", () => {
   test("Content of diff block in Collapse updates based on picker selection", async () => {
     const buildClipboardPayloadSpy = vi
       .spyOn(DiffUtils, "buildClipboardPayload")
-      .mockReturnValueOnce("PAYLOAD_FOR_ALL_FILES_RENDER") // First render (all files)
-      .mockReturnValueOnce("PAYLOAD_FOR_ONE_FILE_RENDER"); // Second render (after picker)
+      // .mockReturnValueOnce("PAYLOAD_FOR_ALL_FILES_RENDER") // No longer called for initial display
+      .mockReturnValue("PAYLOAD_FOR_ONE_FILE_RENDER");  // Called after picker interaction
 
     render(
       <PromptCopyDialog
@@ -279,29 +280,32 @@ describe("PromptCopyDialog with FileDiffPicker integration", () => {
       .closest('div[class*="promptBlock"]');
     expect(diffBlockDiv).toBeInTheDocument();
 
-    // Check initial content (assuming it's expanded and selected)
+    // Initial Render: Should display raw patch content
     await waitFor(() => {
       const preElement = diffBlockDiv!.querySelector("pre");
-      expect(preElement).toHaveTextContent("PAYLOAD_FOR_ALL_FILES_RENDER");
+      expect(preElement).toHaveTextContent(SIMPLE_DIFF_PATCH.trim()); // Check against raw patch
     });
 
-    fireEvent.click(screen.getByText("Choose files…"));
+    fireEvent.click(screen.getByTestId("choose-files-diff-1")); // Use data-testid
     fireEvent.click(screen.getByText("Confirm Picker (1 file)"));
     await waitFor(() =>
       expect(screen.queryByText("FileDiffPickerMock")).not.toBeInTheDocument(),
     );
 
-    // Collapse content should update
+    // After Picker Interaction: Collapse content should update to show buildClipboardPayload output
     await waitFor(() => {
       const preElement = diffBlockDiv!.querySelector("pre");
       expect(preElement).toHaveTextContent("PAYLOAD_FOR_ONE_FILE_RENDER");
     });
 
-    expect(buildClipboardPayloadSpy).toHaveBeenCalledTimes(2); // Once for initial, once after picker
+    // buildClipboardPayloadSpy is now called once for the display after picker interaction.
+    // It might also be called by copy actions, so check count carefully or make spy more specific if needed.
+    // For this specific display update, it's called once.
+    expect(buildClipboardPayloadSpy).toHaveBeenCalledTimes(1);
     buildClipboardPayloadSpy.mockRestore();
   });
 
-  test("Dialog closes and resets diff state", () => {
+  test("Dialog closes and resets diff state, including hasPickedFiles", async () => {
     const mockOnClose = vi.fn();
     const { rerender } = render(
       <PromptCopyDialog
@@ -311,19 +315,35 @@ describe("PromptCopyDialog with FileDiffPicker integration", () => {
         onClose={mockOnClose}
       />,
     );
-    expect(screen.getByText("Choose files…")).toBeInTheDocument();
+    // Interact with picker to set hasPickedFiles to true
+    fireEvent.click(screen.getByTestId("choose-files-diff-1"));
+    fireEvent.click(screen.getByText("Confirm Picker (1 file)"));
+    await waitFor(() => expect(screen.getByText("(1 of 2 files)")).toBeInTheDocument());
+
+    // Verify content is from buildClipboardPayload
+    const buildClipboardPayloadSpy = vi.spyOn(DiffUtils, "buildClipboardPayload").mockReturnValue("PICKED_FILES_PAYLOAD");
+    // Force a re-render to ensure the content updates if it hadn't already fully processed
+    rerender(
+      <PromptCopyDialog
+        isOpen={true}
+        initialPromptText=""
+        blocks={MOCK_BLOCKS_WITH_DIFF}
+        onClose={mockOnClose}
+      />
+    );
+    await waitFor(() => {
+        const diffBlockDiv = screen.getByText("### PR Diff").closest('div[class*="promptBlock"]');
+        const preElement = diffBlockDiv!.querySelector("pre");
+        expect(preElement).toHaveTextContent("PICKED_FILES_PAYLOAD");
+    });
+    buildClipboardPayloadSpy.mockRestore();
+
 
     // Close the dialog
     fireEvent.click(screen.getByText("Close"));
     expect(mockOnClose).toHaveBeenCalledTimes(1);
-
+    
     // Re-render as closed (simulating parent component behavior)
-    // The internal state reset happens when isOpen becomes false.
-    // We need to ensure the useEffect for isOpen, blocks, initialSelectedBlockIds
-    // correctly resets diffPatchData, selectedFilePaths, isFileDiffPickerOpen.
-    // This is hard to directly test from outside without inspecting internal state.
-    // A functional test would be to reopen it and see if it's reset.
-
     rerender(
       <PromptCopyDialog
         isOpen={false} // Now closed
@@ -332,16 +352,23 @@ describe("PromptCopyDialog with FileDiffPicker integration", () => {
         onClose={mockOnClose}
       />,
     );
+    // Reopen
     rerender(
       <PromptCopyDialog
-        isOpen={true} // Reopen
+        isOpen={true}
         initialPromptText=""
-        blocks={MOCK_BLOCKS_WITH_DIFF} // Same blocks
+        blocks={MOCK_BLOCKS_WITH_DIFF}
         onClose={mockOnClose}
       />,
     );
-    // Should re-initialize to all files selected
+    // Should re-initialize to all files selected for the label
     expect(screen.getByText("(All 2 files)")).toBeInTheDocument();
+    // And content should be raw patch again (hasPickedFiles is false)
+    const diffBlockDivReopened = screen.getByText("### PR Diff").closest('div[class*="promptBlock"]');
+    await waitFor(() => {
+        const preElement = diffBlockDivReopened!.querySelector("pre");
+        expect(preElement).toHaveTextContent(SIMPLE_DIFF_PATCH.trim());
+    });
   });
 
   test("Handles no diff block gracefully", () => {

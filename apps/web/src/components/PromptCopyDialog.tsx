@@ -94,6 +94,7 @@ export function PromptCopyDialog({
   const [selectedFilePaths, setSelectedFilePaths] = useState<Set<string>>(
     new Set(),
   );
+  const [hasPickedFiles, setHasPickedFiles] = useState(false); // ADDED state
 
   // Initialize selectedIds and openCollapsible when dialog opens or blocks/initial selections change
   useEffect(() => {
@@ -132,6 +133,7 @@ export function PromptCopyDialog({
       setDiffPatchData(null);
       setSelectedFilePaths(new Set());
       setFileDiffPickerOpen(false);
+      setHasPickedFiles(false); // ADDED: Reset hasPickedFiles
     }
   }, [isOpen, blocks, initialSelectedBlockIds]);
 
@@ -142,17 +144,22 @@ export function PromptCopyDialog({
       if (diffBlock) {
         const parsedPatches = splitUnifiedDiff(diffBlock.patch);
         const allPaths = Object.keys(parsedPatches);
+        // Ensure selectedFilePaths is set before diffPatchData to avoid race conditions in effects/memos
+        setSelectedFilePaths(new Set(allPaths)); // Default to all files selected
         setDiffPatchData({
           patches: parsedPatches,
           allFilePaths: allPaths,
           sourceBlockId: diffBlock.id,
         });
-        setSelectedFilePaths(new Set(allPaths)); // Default to all files selected
+        // setHasPickedFiles(false); // Explicitly ensure it's false on new diff data load / dialog open
       } else {
         // Ensure reset if no diff block is found while open
         setDiffPatchData(null);
         setSelectedFilePaths(new Set());
+        // setHasPickedFiles(false); // Also reset here
       }
+      // Reset hasPickedFiles whenever blocks change or dialog re-opens, before picker interaction
+      setHasPickedFiles(false);
     }
     // No else here, covered by the other useEffect for !isOpen which handles full reset
   }, [isOpen, blocks]);
@@ -224,24 +231,32 @@ export function PromptCopyDialog({
 
   const renderBlockContent = (block: PromptBlock) => {
     if (block.kind === "diff") {
-      // MODIFIED: renderBlockContent for the *active* diff block will now show the selected patch content
-      if (
-        diffPatchData &&
-        block.id === diffPatchData.sourceBlockId &&
-        selectedIds.has(block.id)
-      ) {
-        const currentDiffSelectionContent = buildClipboardPayload({
-          selectedFiles: selectedFilePaths,
-          allFiles: diffPatchData.allFilePaths,
-          patches: diffPatchData.patches,
-        });
-        return (
-          <pre className={`${Classes.CODE_BLOCK} ${styles.codeBlock}`}>
-            {currentDiffSelectionContent.length > 0
-              ? currentDiffSelectionContent
-              : "(No files selected or diff is empty)"}
-          </pre>
-        );
+      // Check if this is the active diff block being managed by diffPatchData
+      const isActiveManagedDiffBlock = diffPatchData && block.id === diffPatchData.sourceBlockId;
+
+      if (isActiveManagedDiffBlock && selectedIds.has(block.id)) {
+        if (hasPickedFiles) {
+          // User has interacted with the picker, show the selection based on buildClipboardPayload
+          const currentDiffSelectionContent = buildClipboardPayload({
+            selectedFiles: selectedFilePaths,
+            allFiles: diffPatchData.allFilePaths, // diffPatchData is non-null here
+            patches: diffPatchData.patches,       // diffPatchData is non-null here
+          });
+          return (
+            <pre className={`${Classes.CODE_BLOCK} ${styles.codeBlock}`}>
+              {currentDiffSelectionContent.length > 0
+                ? currentDiffSelectionContent
+                : "(No files selected or diff is empty)"}
+            </pre>
+          );
+        } else {
+          // User has not yet picked, or state was reset. Show the original full patch of this block.
+          return (
+            <pre className={`${Classes.CODE_BLOCK} ${styles.codeBlock}`}>
+              {block.patch}
+            </pre>
+          );
+        }
       }
       // For other diff blocks (if any) or if the main diff block isn't selected for detailed view, show its original patch
       return (
@@ -498,6 +513,7 @@ export function PromptCopyDialog({
           defaultChecked={true}
           onConfirm={(newSelectedPaths) => {
             setSelectedFilePaths(newSelectedPaths);
+            setHasPickedFiles(true); // ADDED: Indicate picker has been used
             setFileDiffPickerOpen(false);
           }}
           onCancel={() => setFileDiffPickerOpen(false)}

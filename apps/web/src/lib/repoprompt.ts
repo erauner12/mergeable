@@ -5,7 +5,6 @@ import {
   getPullRequestDiff,
   getPullRequestMeta,
   listPrCommits,
-  gitHubClient, // Ensure gitHubClient is imported if used directly, or pass as param
 } from "./github/client";
 import type { Pull } from "./github/types";
 import { getBasePrompt, getDefaultRoot } from "./settings";

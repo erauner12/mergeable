@@ -9,11 +9,15 @@ import {
   SearchDocument,
   SearchFullDocument,
   StatusState,
-  type Actor, // Added Actor type import
+  type Actor as GqlActor, // Renamed import to GqlActor
   type CheckRun,
   type SearchFullQuery,
   type SearchQuery,
   type StatusContext,
+  // Types for PR node in makePull
+  type SearchQueryVariables, // For SearchResultItem
+  type SearchResultItemEdge,
+
 } from "../../../generated/gql/graphql";
 import { prepareQuery } from "./search";
 import {
@@ -25,7 +29,7 @@ import type {
   Check,
   CheckState,
   Discussion,
-  Endpoint, // Added Endpoint type import
+  // Endpoint, // Removed Endpoint type import from here, it's defined locally
   Participant,
   Profile,
   PullProps,
@@ -38,6 +42,7 @@ import type { CommentBlockInput } from "../repoprompt"; // Import CommentBlockIn
 type IssueComment = Endpoints["GET /repos/{owner}/{repo}/issues/{issue_number}/comments"]["response"]["data"][number];
 type PullReview = Endpoints["GET /repos/{owner}/{repo}/pulls/{pull_number}/reviews"]["response"]["data"][number];
 type PullReviewComment = Endpoints["GET /repos/{owner}/{repo}/pulls/{pull_number}/comments"]["response"]["data"][number];
+type UserTeam = Endpoints["GET /user/teams"]["response"]["data"][number]; // Type for team obj
 
 // single commit item returned by pulls.listCommits
 export type PullRequestCommit = Endpoints["GET /repos/{owner}/{repo}/pulls/{pull_number}/commits"]["response"]["data"][number];

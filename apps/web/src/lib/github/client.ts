@@ -329,20 +329,24 @@ export class DefaultGitHubClient implements GitHubClient {
       );
 
       const headComment = commentsInThreadGroup[0]; // The first comment chronologically establishes path, line, hunk
+      const lastComment =
+        commentsInThreadGroup[commentsInThreadGroup.length - 1]; // Get the last comment
 
       const path = headComment.path;
       // Use line in diff, fallback to original_line in commit, then 0
       const line = headComment.line ?? headComment.original_line ?? 0;
       const diffHunk = headComment.diff_hunk ?? undefined;
 
-      // Fetch resolution status for the thread (identified by headComment.id of its first comment)
+      // Fetch resolution status for the thread
       // Note: Standard GitHub REST API for a single comment does not provide 'is_resolved'.
       // This implementation follows the user's plan, assuming this call yields resolution status.
+      // Use the **latest** comment's metadata because GitHub updates
+      // `is_resolved` on every comment in a thread once it is resolved,
+      // or at least the latest comment should reflect the current status.
       let resolved = false; // Default to unresolved
-      const commentIdForThreadMeta = headComment.id; // API expects number, headComment.id is already a number
+      const commentIdForThreadMeta = lastComment.id; // Use ID of the last comment in the thread
 
       // Use threadKey for caching resolution as it represents the group.
-      // headComment.id should be stable for a given threadKey.
       const cacheKeyForResolution = threadKey;
 
       if (this.threadResolutionCache.has(cacheKeyForResolution)) {
@@ -352,12 +356,15 @@ export class DefaultGitHubClient implements GitHubClient {
           .request("GET /repos/{owner}/{repo}/pulls/comments/{comment_id}", {
             owner,
             repo,
-            comment_id: commentIdForThreadMeta, // Use the ID of one comment in the thread
+            comment_id: commentIdForThreadMeta, // Use the ID of the last comment in the thread
           })
           .then((response) => {
             // Assuming 'is_resolved' is available on response.data as per plan.
             // Standard Octokit types do not include this for this endpoint.
-            return (response.data as PullRequestCommentSingleWithResolution)?.is_resolved === true;
+            return (
+              (response.data as PullRequestCommentSingleWithResolution)
+                ?.is_resolved === true
+            );
           })
           .catch((err) => {
             console.warn(

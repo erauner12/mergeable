@@ -1,5 +1,5 @@
 import { renderHook, act } from "@testing-library/react";
-import { useDiffSelection } from "../../../src/hooks/useDiffSelection";
+import { useDiffSelection } from "../../src/hooks/useDiffSelection"; // Corrected path
 import { expect, test } from "vitest";
 
 const FILES = ["foo.ts", "bar.js", "baz.md"];

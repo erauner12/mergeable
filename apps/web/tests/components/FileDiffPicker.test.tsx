@@ -1,7 +1,7 @@
 import { render, screen, fireEvent } from "@testing-library/react";
-import { FileDiffPicker } from "../../../src/components/FileDiffPicker";
-import { vi, test, expect, beforeEach } from "vitest";
-import type { PatchFileMetadata } from "../../../src/lib/github/diffUtils";
+import { FileDiffPicker } from "../../src/components/FileDiffPicker";
+import { vi, test, expect } from "vitest";
+import type { PatchFileMetadata } from "../../src/lib/github/diffUtils";
 
 const MOCK_FILES_UNSORTED: PatchFileMetadata[] = [
   { path: "zebra.js", patch: "diff z", lineCount: 10, byteCount: 100, isBinary: false },

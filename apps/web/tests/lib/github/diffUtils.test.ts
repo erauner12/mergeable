@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { splitUnifiedDiff, buildClipboardPayload, type PatchFileMetadata } from "../../../src/lib/github/diffUtils";
+import { splitUnifiedDiff, buildClipboardPayload, type PatchFileMetadata } from "../../../src/lib/github/diffUtils"; // Corrected path
 
 const SIMPLE_DIFF_CONTENT = `diff --git a/a.txt b/a.txt
 index 0000000..1111111 100644
@@ -64,7 +64,7 @@ test("buildClipboardPayload respects selection & omission reasons", () => {
 
   expect(payload).toMatch(/### files changed \(2\)/);
   // Order in header is sorted: a.txt then img.png
-  expect(payload).toMatch(/- a\.txt\n- img\.png _\(binary file – diff omitted\)_/s);
+  expect(payload).toMatch(/- a\.txt\n- img\.png _\(binary file – diff omitted\)_/);
   expect(payload).toContain(SIMPLE_DIFF_CONTENT.trim());
   expect(payload).not.toContain("Binary files a/img.png and b/img.png differ");
 });
@@ -116,7 +116,8 @@ test("buildClipboardPayload handles large byte size file omission", () => {
     allFiles: ["longline.js"],
     patches,
   });
-  expect(payload).toMatch(/- longline\.js _\(${expectedKB} KB – diff omitted\)_/);
+  const regex = new RegExp(`- longline\\.js _\\(${expectedKB} KB – diff omitted\\)_`);
+  expect(payload).toMatch(regex);
 });
 
 test("buildClipboardPayload includes all selected files' patches", () => {
@@ -129,7 +130,7 @@ test("buildClipboardPayload includes all selected files' patches", () => {
     patches,
   });
 
-  expect(payload).toMatch(/- a\.txt\n- img\.png/s); // Both listed without "omitted"
+  expect(payload).toMatch(/- a\.txt\n- img\.png/);
   expect(payload).toContain(SIMPLE_DIFF_CONTENT.trim());
   expect(payload).toContain(BINARY_DIFF_CONTENT.trim());
 });

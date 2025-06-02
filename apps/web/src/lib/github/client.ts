@@ -155,12 +155,13 @@ export class DefaultGitHubClient implements GitHubClient {
     const edges = data.search.edges?.filter(isNonNull) ?? [];
     const pulls = edges
         .map(edge => edge.node) // Extract node first
-        .filter(isPullRequestNode) // Filter for PullRequestNode
-        .map(prNode => this.makePull(prNode)); // Now prNode is correctly typed
+        .filter(isNonNullish) // Filter out null/undefined nodes
+        .filter(isPullRequestNode) // Then, filter for PullRequestNode
+        .map(prNode => this.makePull(prNode)); // Now prNode is correctly typed as PullRequestNode
     return pulls;
-  }
-
-  async fetchPullComments(
+    }
+    
+    async fetchPullComments(
     endpoint: Endpoint,
     owner: string,
     repo: string,

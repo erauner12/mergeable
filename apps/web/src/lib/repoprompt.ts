@@ -89,17 +89,23 @@ export function logRepoPromptCall(details: {
 /** The PR object we need here must expose the head-branch name. */
 type PullWithBranch = Pull & { branch: string };
 
+/** Return a stable `YYYY-Mon-DD` string in **UTC**, e.g. `2024-Jan-01`. */
+function formatDateUtcShort(ts: string): string {
+  const d = new Date(ts);
+  const months = ["Jan","Feb","Mar","Apr","May","Jun",
+                  "Jul","Aug","Sep","Oct","Nov","Dec"];
+  return `${d.getUTCFullYear()}-${months[d.getUTCMonth()]}-${String(
+           d.getUTCDate()
+         ).padStart(2, "0")}`;
+}
+
 // Renamed and updated to handle single PromptBlock
 export function formatPromptBlock(block: PromptBlock): string {
   if (block.kind === "diff") {
     // keep the patch exactly as GitHub returned it
     return `${block.header}\n\`\`\`diff\n${block.patch}\n\`\`\`\n`;
   } else if (block.kind === "comment") {
-    const dateString = new Date(block.timestamp).toLocaleDateString("en-CA", {
-      year: "numeric",
-      month: "short",
-      day: "numeric",
-    });
+    const dateString = formatDateUtcShort(block.timestamp);
     return `${block.header}\n> _${block.author} · ${dateString}_\n\n${block.commentBody}\n`;
   }
   return ""; // Should not happen
@@ -294,9 +300,9 @@ export async function buildRepoPromptText(
           commitMessageMap.get(sha) || "Unknown commit message";
         const block: DiffBlockInput = {
           id: `diff-commit-${sha}`,
-          kind: "diff",
-          header: `### COMMIT (${shortSha} — "${commitTitle}")`,
-          patch: commitDiff,
+          kind: "diff";
+          header: `### COMMIT (${shortSha} — "${commitTitle}")`;
+          patch: commitDiff;
         };
         allPromptBlocks.push(block);
         initiallySelectedBlocks.push(block); // Assuming specific commits are also initially selected if requested

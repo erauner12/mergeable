@@ -33,6 +33,7 @@ export function mockPull(props?: Omit<Partial<Pull>, "uid">): Pull {
     labels: [],
     branch: props?.branch ?? "main",
     files: props?.files ?? ["file1.ts", "file2.md"],
+    participants: props?.participants ?? [], // ADDED
     uid: `${connection}:${id}`,
     host,
     sections: [],

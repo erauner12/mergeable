@@ -7,6 +7,17 @@ import {
   PullRequestReviewDecision,
   PullRequestReviewState,
 } from "../../../generated/gql/graphql";
+import {
+  CheckConclusionState,
+  PullRequestReviewDecision,
+  PullRequestReviewState,
+  StatusState, // ADDED
+  type CheckRun, // ADDED
+  type StatusContext, // ADDED
+  type SearchQuery, // ADDED
+  type SearchFullQuery, // ADDED
+} from "../../../generated/gql/graphql";
+import { SearchDocument, SearchFullDocument } from "../../../generated/gql/graphql"; // ADDED
 import { prepareQuery } from "./search";
 import {
   hasLatestOpinionatedReviews,
@@ -24,19 +35,22 @@ import type {
   Team,
   User,
 } from "./types";
-import type { Actor } from "./type-guards"; // ADDED
-import type { CommentBlockInput } from "../repoprompt"; // Import CommentBlockInput
+import type { Actor } from "./type-guards";
+import type { CommentBlockInput } from "../repoprompt";
 
 // Type aliases for Octokit responses
-type _IssueComment = Endpoints["GET /repos/{owner}/{repo}/issues/{issue_number}/comments"]["response"]["data"][number]; // MODIFIED: added _
-type _PullReview = Endpoints["GET /repos/{owner}/{repo}/pulls/{pull_number}/reviews"]["response"]["data"][number]; // MODIFIED: added _
-type _PullReviewComment = Endpoints["GET /repos/{owner}/{repo}/pulls/{pull_number}/comments"]["response"]["data"][number]; // MODIFIED: added _
-type _UserTeam = Endpoints["GET /user/teams"]["response"]["data"][number]; // MODIFIED: added _ // Type for team obj
+type IssueComment = Endpoints["GET /repos/{owner}/{repo}/issues/{issue_number}/comments"]["response"]["data"][number];
+type IssueComment = Endpoints["GET /repos/{owner}/{repo}/issues/{issue_number}/comments"]["response"]["data"][number];
+type PullReview = Endpoints["GET /repos/{owner}/{repo}/pulls/{pull_number}/reviews"]["response"]["data"][number];
+type PullReviewComment = Endpoints["GET /repos/{owner}/{repo}/pulls/{pull_number}/comments"]["response"]["data"][number];
+type UserTeam = Endpoints["GET /user/teams"]["response"]["data"][number];
+
+// ADDED: Define PullNode based on the expected structure from SearchQuery/SearchFullQuery
+type PullNode = Extract<NonNullable<SearchQuery["search"]["edges"]>[number], { node: any }>["node"];
+
 
 // single commit item returned by pulls.listCommits
 export type PullRequestCommit = Endpoints["GET /repos/{owner}/{repo}/pulls/{pull_number}/commits"]["response"]["data"][number];
-
-const MyOctokit = Octokit.plugin(throttling);
 
 export type Endpoint = {
   auth: string;
@@ -135,14 +149,14 @@ async searchPulls(
     : (SearchDocument.toString() as string);
 
   const octokit = this.getOctokit(endpoint); // MODIFIED: use helper
-  const data = await octokit.graphql<SearchQuery | SearchFullQuery>(query, {
+  const data = await octokit.graphql<SearchQuery | SearchFullQuery>(query, { // MODIFIED: Add explicit generic
     q,
     limit,
   });
   return (
     data.search.edges
       ?.filter(isNonNull)
-      .map((n) => this.makePull(n))
+      .map((n) => this.makePull(n.node as PullNode)) // MODIFIED: Cast n.node to PullNode or similar from GQL types
       .filter(isNonNull) ?? []
   );
 }
@@ -183,7 +197,7 @@ async searchPulls(
         issue_number: number,
         per_page: 100,
       });
-      issueComments.forEach((comment: IssueComment) => {
+      issueComments.forEach((comment: IssueComment) => { // MODIFIED: Use non-prefixed type
         if (comment.body) { // Ensure there's a body
           results.push({
             id: `issuecomment-${comment.id}`,
@@ -208,7 +222,7 @@ async searchPulls(
         pull_number: number,
         per_page: 100,
       });
-      reviews.forEach((review: PullReview) => {
+      reviews.forEach((review: PullReview) => { // MODIFIED: Use non-prefixed type
         // Only include reviews that have a body and are not just pending
         if (review.body && review.state !== "PENDING") {
           results.push({
@@ -237,7 +251,7 @@ async searchPulls(
 
       // Group comments by path and original_line to form threads
       const threads: Record<string, PullReviewComment[]> = {};
-      reviewComments.forEach((comment: PullReviewComment) => {
+      reviewComments.forEach((comment: PullReviewComment) => { // MODIFIED: Use non-prefixed type
         if (!comment.path || typeof comment.original_line === 'undefined' || comment.original_line === null) return; // Skip comments not tied to a specific line/path
         const threadKey = `${comment.path}:${comment.original_line}`;
         if (!threads[threadKey]) {
@@ -279,7 +293,7 @@ async searchPulls(
     return results;
   }
 
-  private makePull(prNode: any): PullProps {
+  private makePull(prNode: any): PullProps { // TODO: Replace 'any' with the correct GraphQL PullRequest type from SearchQuery/SearchFullQuery
     const discussions: Discussion[] = []; // This now uses the updated Discussion type from types.ts
     const participants: Participant[] = [];
 
@@ -316,23 +330,31 @@ async searchPulls(
 
     return {
       id: prNode.id,
-      title: prNode.title,
+      repo: `${prNode.repository.owner.login}/${prNode.repository.name}`, // Construct repo string
       number: prNode.number,
+      title: prNode.title,
+      body: prNode.bodyHTML || prNode.bodyText || prNode.body, // Handle different body fields
+      state: this.toPullState(prNode), // Use helper to map state
+      checkState: this.toCheckStateFromRollup(prNode.statusCheckRollup), // Use helper for check state
+      queueState: hasMergeQueueEntry(prNode) && prNode.mergeQueueEntry?.mergeableState === "MERGEABLE" ? "mergeable" :
+                  hasMergeQueueEntry(prNode) && prNode.mergeQueueEntry?.mergeableState === "UNMERGEABLE" ? "unmergeable" :
+                  "pending", // Map queue state
       createdAt: this.toDate(prNode.createdAt),
       updatedAt: this.toDate(prNode.updatedAt),
+      enqueuedAt: hasMergeQueueEntry(prNode) ? this.toDate(prNode.mergeQueueEntry.enqueuedAt) : undefined,
+      mergedAt: this.toDate(prNode.mergedAt),
+      closedAt: this.toDate(prNode.closedAt),
+      locked: prNode.locked ?? false,
       url: prNode.url,
-      author: this.makeUser(prNode.author),
-      participants,
       labels:
         prNode.labels?.nodes
           ?.filter(isNonNull)
-          .map((n) => n.name) ?? [],
-      draft: prNode.isDraft,
-      mergeable: prNode.mergeable === "MERGEABLE",
-      totalComments: prNode.comments?.totalCount ?? 0,
-      reviewDecision: prNode.reviewDecision ?? null,
-      approved: prNode.reviewDecision === PullRequestReviewDecision.Approved,
-      // TODO: what do we do if there are no reviews?
+          .map((n: { name: string }) => n.name) ?? [],
+      additions: prNode.additions ?? 0,
+      deletions: prNode.deletions ?? 0,
+      author: this.makeUser(prNode.author),
+      requestedReviewers: prNode.reviewRequests?.nodes?.map((req: any) => this.makeUser(req.requestedReviewer)).filter(isNonNull) ?? [],
+      requestedTeams: prNode.reviewRequests?.nodes?.map((req: any) => this.makeTeam(req.requestedReviewer)).filter(isNonNull) ?? [],
       reviews: hasLatestOpinionatedReviews(prNode)
         ? (() => {
             const reviews = prNode.latestOpinionatedReviews.nodes?.filter(
@@ -341,10 +363,10 @@ async searchPulls(
             return (
               reviews
                 ?.filter(
-                  (n: any) =>
+                  (n: any) => // TODO: type 'n' correctly from GQL
                     n.state !== PullRequestReviewState.Pending,
                 )
-                .map((n: any) => ({
+                .map((n: any) => ({ // TODO: type 'n' correctly from GQL
                   author: this.makeUser(n.author),
                   collaborator: n.authorCanPushToRepository,
                   approved: n.state === PullRequestReviewState.Approved,
@@ -356,7 +378,7 @@ async searchPulls(
         ? (() => {
             // Buffer as unknown[], then narrow → (CheckRun | StatusContext)[]
             const rawContexts: unknown[] =
-              prNode.statusCheckRollup.contexts?.nodes ?? [];
+              prNode.statusCheckRollup?.contexts?.nodes ?? [];
 
             const nodes = rawContexts
               .filter(isNonNullish)
@@ -372,7 +394,56 @@ async searchPulls(
         prNode.files?.nodes
           ?.filter(isNonNullish)
           .map((f: { path: string }) => f.path) ?? [],
+      participants, // ADDED
     };
+  }
+
+  private makeUser(obj: Actor): User | null {
+    if (
+      obj?.__typename === "Bot" ||
+      obj?.__typename === "Mannequin" ||
+      obj?.__typename === "User" ||
+      obj?.__typename === "EnterpriseUserAccount"
+    ) {
+      return {
+        id: obj.id,
+        name: obj.login,
+        avatarUrl: `${obj.avatarUrl}`,
+        bot: obj.__typename === "Bot",
+      };
+    } else {
+      // No user provided, or unsupported type.
+      return null;
+    }
+  }
+
+  private makeTeam(obj: Actor): Team | null { // ADDED helper
+    if (obj?.__typename === "Team") {
+      return {
+        id: obj.id,
+        name: obj.name ?? obj.slug, // Use name or slug
+      };
+    }
+    return null;
+  }
+
+  private toPullState(prNode: any): PullProps["state"] { // ADDED helper
+    if (prNode.isDraft) return "draft";
+    if (prNode.merged) return "merged";
+    if (prNode.closed) return "closed";
+    if (hasMergeQueueEntry(prNode) && prNode.mergeQueueEntry) return "enqueued";
+    if (prNode.reviewDecision === PullRequestReviewDecision.Approved) return "approved";
+    return "pending";
+  }
+
+  private toCheckStateFromRollup(rollup: any): CheckState { // ADDED helper
+    if (!rollup || !rollup.state) return "pending";
+    switch (rollup.state) {
+      case "SUCCESS": return "success";
+      case "ERROR": return "error";
+      case "FAILURE": return "failure";
+      default: return "pending";
+    }
   }
 
   private makeUser(obj: Actor): User | null {

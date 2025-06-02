@@ -80,15 +80,19 @@ test("should contain the author when a user replied", () => {
     author: me,
     discussions: [
       {
-        resolved: false,
-        numComments: 2,
-        participants: [
-          { user: me, numComments: 1, lastActiveAt: "2025-05-05T10:30:00Z" },
-          { user: user1, numComments: 1, lastActiveAt: "2025-05-05T10:40:00Z" },
-        ],
-        file: { path: "README.md" },
+        id: "d1",
+        isResolved: false,
+        author: user1,
+        createdAt: "2025-05-05T10:40:00Z",
+        body: "A comment",
+        url: "http://example.com/d1",
+        filePath: "README.md",
       },
     ],
+    participants: [
+        { user: me, numComments: 1, lastActiveAt: "2025-05-05T10:30:00Z" },
+        { user: user1, numComments: 1, lastActiveAt: "2025-05-05T10:40:00Z" },
+    ]
   });
   const attention = isInAttentionSet(viewer, pull);
   expect(attention).toEqual({ set: true, reason: "1 unread discussion" });
@@ -100,14 +104,18 @@ test("should contain the author when a user left a comment", () => {
     author: me,
     discussions: [
       {
-        resolved: false,
-        numComments: 2,
-        participants: [
-          { user: user1, numComments: 1, lastActiveAt: "2025-05-05T10:30:00Z" },
-        ],
-        file: { path: "README.md" },
+        id: "d2",
+        isResolved: false,
+        author: user1,
+        createdAt: "2025-05-05T10:30:00Z",
+        body: "Another comment",
+        url: "http://example.com/d2",
+        filePath: "README.md",
       },
     ],
+    participants: [
+        { user: user1, numComments: 1, lastActiveAt: "2025-05-05T10:30:00Z" },
+    ]
   });
   const attention = isInAttentionSet(viewer, pull);
   expect(attention).toEqual({ set: true, reason: "1 unread discussion" });
@@ -119,23 +127,29 @@ test("should contain the author when a user left a comment and another user repl
     author: me,
     discussions: [
       {
-        resolved: false,
-        numComments: 2,
-        participants: [
-          { user: user2, numComments: 1, lastActiveAt: "2025-05-05T10:50:00Z" },
-        ],
-        file: { path: "README.md" },
+        id: "d3",
+        isResolved: false,
+        author: user2,
+        createdAt: "2025-05-05T10:50:00Z",
+        body: "Comment d3",
+        url: "http://example.com/d3",
+        filePath: "README.md",
       },
       {
-        resolved: false,
-        numComments: 2,
-        participants: [
-          { user: me, numComments: 1, lastActiveAt: "2025-05-05T10:30:00Z" },
-          { user: user1, numComments: 1, lastActiveAt: "2025-05-05T10:40:00Z" },
-        ],
-        file: { path: "README.md" },
+        id: "d4",
+        isResolved: false,
+        author: user1,
+        createdAt: "2025-05-05T10:40:00Z",
+        body: "Comment d4",
+        url: "http://example.com/d4",
+        filePath: "README.md",
       },
     ],
+    participants: [
+        { user: me, numComments: 1, lastActiveAt: "2025-05-05T10:30:00Z" },
+        { user: user1, numComments: 1, lastActiveAt: "2025-05-05T10:40:00Z" },
+        { user: user2, numComments: 1, lastActiveAt: "2025-05-05T10:50:00Z" },
+    ]
   });
   const attention = isInAttentionSet(viewer, pull);
   expect(attention).toEqual({ set: true, reason: "2 unread discussions" });
@@ -147,15 +161,19 @@ test("should not contain the author when a user replied in a resolved discussion
     author: me,
     discussions: [
       {
-        resolved: true,
-        numComments: 2,
-        participants: [
-          { user: me, numComments: 1, lastActiveAt: "2025-05-05T10:30:00Z" },
-          { user: user1, numComments: 1, lastActiveAt: "2025-05-05T10:40:00Z" },
-        ],
-        file: { path: "README.md" },
+        id: "d5",
+        isResolved: true,
+        author: user1,
+        createdAt: "2025-05-05T10:40:00Z",
+        body: "Resolved comment",
+        url: "http://example.com/d5",
+        filePath: "README.md",
       },
     ],
+    participants: [
+        { user: me, numComments: 1, lastActiveAt: "2025-05-05T10:30:00Z" },
+        { user: user1, numComments: 1, lastActiveAt: "2025-05-05T10:40:00Z" },
+    ]
   });
   const attention = isInAttentionSet(viewer, pull);
   expect(attention).toEqual({ set: false });
@@ -167,13 +185,17 @@ test("should not contain the author when a user posted in the top-level discussi
     author: me,
     discussions: [
       {
-        resolved: false,
-        numComments: 1,
-        participants: [
-          { user: user1, numComments: 1, lastActiveAt: "2025-05-05T10:30:00Z" },
-        ],
+        id: "d6",
+        isResolved: false,
+        author: user1,
+        createdAt: "2025-05-05T10:30:00Z",
+        body: "Top level comment",
+        url: "http://example.com/d6",
       },
     ],
+    participants: [
+        { user: user1, numComments: 1, lastActiveAt: "2025-05-05T10:30:00Z" },
+    ]
   });
   const attention = isInAttentionSet(viewer, pull);
   expect(attention).toEqual({ set: false });
@@ -185,14 +207,18 @@ test("should not contain the author when only the author posted", () => {
     author: me,
     discussions: [
       {
-        resolved: false,
-        numComments: 2,
-        participants: [
-          { user: me, numComments: 2, lastActiveAt: "2025-05-05T10:30:00Z" },
-        ],
-        file: { path: "README.md" },
+        id: "d7",
+        isResolved: false,
+        author: me,
+        createdAt: "2025-05-05T10:30:00Z",
+        body: "My own comment",
+        url: "http://example.com/d7",
+        filePath: "README.md",
       },
     ],
+    participants: [
+        { user: me, numComments: 2, lastActiveAt: "2025-05-05T10:30:00Z" },
+    ]
   });
   const attention = isInAttentionSet(viewer, pull);
   expect(attention).toEqual({ set: false });
@@ -205,15 +231,19 @@ test("should contain a reviewer when a user replied", () => {
     reviews: [{ author: me, collaborator: true, approved: false }],
     discussions: [
       {
-        resolved: false,
-        numComments: 2,
-        participants: [
-          { user: me, numComments: 1, lastActiveAt: "2025-05-05T10:30:00Z" },
-          { user: user1, numComments: 1, lastActiveAt: "2025-05-05T10:40:00Z" },
-        ],
-        file: { path: "README.md" },
+        id: "d8",
+        isResolved: false,
+        author: user1,
+        createdAt: "2025-05-05T10:40:00Z",
+        body: "Reply to reviewer",
+        url: "http://example.com/d8",
+        filePath: "README.md",
       },
     ],
+    participants: [
+        { user: me, numComments: 1, lastActiveAt: "2025-05-05T10:30:00Z" },
+        { user: user1, numComments: 1, lastActiveAt: "2025-05-05T10:40:00Z" },
+    ]
   });
   const attention = isInAttentionSet(viewer, pull);
   expect(attention).toEqual({ set: true, reason: "1 unread discussion" });
@@ -239,7 +269,7 @@ function mockPull(
     createdAt: props?.createdAt ?? "2024-08-05T15:57:00Z",
     updatedAt: props?.updatedAt ?? "2024-08-05T15:57:00Z",
     locked: props?.locked ?? false,
-    url: `https://${host}/${repo}/pull/${number}`, // Construct URL
+    url: `https://${host}/${repo}/pull/${number}`,
     additions: props?.additions ?? 0,
     deletions: props?.deletions ?? 0,
     author:
@@ -252,13 +282,13 @@ function mockPull(
     discussions: props?.discussions ?? [],
     checks: props?.checks ?? [],
     labels: props?.labels ?? [],
-    branch: props?.branch ?? "main", // Ensure branch is always a string
-    files: props?.files ?? [], // Ensure files is always an array
-    uid: `${connection}:${id}`, // Construct UID
+    branch: props?.branch ?? "main",
+    files: props?.files ?? [],
+    participants: props?.participants ?? [],
+    uid: `${connection}:${id}`,
     host,
     sections: props?.sections ?? [],
     connection,
-    // Spread other props that are part of Pull but not explicitly listed
     ...props,
   };
 }

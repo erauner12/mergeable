@@ -9,6 +9,7 @@ import {
   type ResolvedPullMeta,
   type CommentBlockInput, // Keep if needed for explicit typing of mockComments, otherwise remove
 } from "../../src/lib/repoprompt";
+import { isDiffBlock } from "../../src/lib/repoprompt.guards";
 import * as settings from "../../src/lib/settings";
 // Assuming mockPull is imported from a shared testing utility like "../testing"
 import { mockPull } from "../testing";
@@ -228,11 +229,15 @@ describe("buildRepoPromptText", () => {
       undefined,
     );
     expect(blocks.length).toBe(2); // PR Details + PR Diff
-    const diffBlock = blocks.find(b => b.kind === "diff");
+    const diffBlock = blocks.find(b => b.kind === "diff"); // Find by kind first
     expect(diffBlock).toBeDefined();
-    expect(diffBlock.id).toContain("diff-pr");
-    expect(diffBlock.header).toBe("### FULL PR DIFF");
-    expect(diffBlock.patch).toBe("dummy pr diff content");
+    if (diffBlock && isDiffBlock(diffBlock)) {
+      expect(diffBlock.id).toContain("diff-pr");
+      expect(diffBlock.header).toBe("### FULL PR DIFF");
+      expect(diffBlock.patch).toBe("dummy pr diff content");
+    } else {
+      fail("Diff block not found or not of correct type");
+    }
     
     // promptText contains initially selected blocks (PR details + PR diff)
     expect(promptText).toContain("### PR #123 DETAILS");
@@ -288,8 +293,12 @@ describe("buildRepoPromptText", () => {
     
     const diffBlock = blocks.find(b => b.id === `diff-last-commit-${mockLastCommit.sha}`);
     expect(diffBlock).toBeDefined();
-    expect(diffBlock.header).toContain('### LAST COMMIT (lastsha — "Last commit title")');
-    expect(diffBlock.patch).toBe("diff for lastsha1");
+    if (diffBlock && isDiffBlock(diffBlock)) {
+      expect(diffBlock.header).toContain('### LAST COMMIT (lastsha — "Last commit title")');
+      expect(diffBlock.patch).toBe("diff for lastsha1");
+    } else {
+      fail("Last commit diff block not found or not of correct type");
+    }
   });
 
   it("should include specific commits diff if specified", async () => {
@@ -318,13 +327,21 @@ describe("buildRepoPromptText", () => {
 
     const diffBlock1 = blocks.find(b => b.id === `diff-commit-specsha1`);
     expect(diffBlock1).toBeDefined();
-    expect(diffBlock1.header).toContain('### COMMIT (specsha — "Specific commit ONE")');
-    expect(diffBlock1.patch).toBe("diff for specsha1");
+    if (diffBlock1 && isDiffBlock(diffBlock1)) {
+      expect(diffBlock1.header).toContain('### COMMIT (specsha — "Specific commit ONE")');
+      expect(diffBlock1.patch).toBe("diff for specsha1");
+    } else {
+      fail("Specific commit diff block 1 not found or not of correct type");
+    }
 
     const diffBlock2 = blocks.find(b => b.id === `diff-commit-specsha2`);
     expect(diffBlock2).toBeDefined();
-    expect(diffBlock2.header).toContain('### COMMIT (specsha — "Specific commit TWO")');
-    expect(diffBlock2.patch).toBe("diff for specsha2");
+    if (diffBlock2 && isDiffBlock(diffBlock2)) {
+      expect(diffBlock2.header).toContain('### COMMIT (specsha — "Specific commit TWO")');
+      expect(diffBlock2.patch).toBe("diff for specsha2");
+    } else {
+      fail("Specific commit diff block 2 not found or not of correct type");
+    }
   });
 });
 // Remove old tests for buildRepoPromptLink that checked prompt encoding or diff content in the URL

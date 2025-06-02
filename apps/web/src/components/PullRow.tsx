@@ -13,6 +13,7 @@ import {
   type LaunchMode,
   type ResolvedPullMeta,
 } from "../lib/repoprompt";
+import { isDiffBlock } from "../lib/repoprompt.guards";
 import { computeSize } from "../lib/size";
 import CopyToClipboardIcon from "./CopyToClipboardIcon";
 import DiffPickerDialog from "./DiffPickerDialog";
@@ -91,7 +92,7 @@ export default function PullRow({ pull, sizes }: PullRowProps) {
       allPromptBlocks.forEach(block => {
         if (block.id.startsWith('pr-details')) { // PR details always selected
           newInitialSelectedBlockIds.add(block.id);
-        } else if (block.kind === 'diff') {
+        } else if (isDiffBlock(block)) {
           if (diffOpts?.includePr && block.id.startsWith('diff-pr')) {
             newInitialSelectedBlockIds.add(block.id);
           }

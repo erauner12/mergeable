@@ -46,7 +46,7 @@ async function copyTextToClipboard(text: string): Promise<boolean> {
 
 interface PromptCopyDialogProps {
   isOpen: boolean;
-  _initialPromptText: string; // MODIFIED: Renamed from initialPromptText
+  initialPromptText: string; // MODIFIED: Renamed from _initialPromptText
   blocks: PromptBlock[];
   initialSelectedBlockIds?: Set<string>; // IDs of blocks initially selected by DiffPickerDialog choices
   onClose: () => void;
@@ -62,7 +62,7 @@ interface CopyState {
 
 export function PromptCopyDialog({
   isOpen,
-  _initialPromptText, // MODIFIED: Renamed from initialPromptText
+  initialPromptText, // MODIFIED: Renamed from _initialPromptText
   blocks,
   initialSelectedBlockIds,
   onClose,

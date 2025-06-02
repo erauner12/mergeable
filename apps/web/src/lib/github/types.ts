@@ -32,6 +32,8 @@ export type Discussion = {
   // Note: 'file', 'numComments', 'participants', 'resolved' (as distinct from isResolved) are removed
   // as per the structure produced by client.ts#makePull and the plan's definition for Discussion.
   // This will likely impact attention.ts.
+  filePath?: string; // ADDED for code comment threads
+  line?: number; // ADDED for code comment threads
 };
 
 export type Participant = {

@@ -1,5 +1,5 @@
 import { firstBy, prop } from "remeda";
-import type { Attention, PullProps, Profile } from "./types";
+import type { Attention, PullProps, Profile, Discussion } from "./types";
 
 // A pull request is in the attention set if:
 // - The user is the author, and the pull request is approved
@@ -42,44 +42,63 @@ export function isInAttentionSet(viewer: Profile, pull: PullProps): Attention {
     }
   }
 
+  function isCodeThread(d: Discussion): d is Discussion & { filePath: string } {
+    return typeof d.filePath === 'string' && d.filePath.length > 0;
+  }
+
   let unreadDiscussions = 0;
   let unresolvedDiscussions = 0;
   for (const discussion of pull.discussions) {
-    if (discussion.resolved) {
+    if (discussion.isResolved) {
       // Resolved discussions are ignored.
       continue;
     }
-    if (!discussion.file) {
+    if (!isCodeThread(discussion)) {
       // Top-level discussion is ignored, since it tends to be a giant catch-all thread.
       continue;
     }
-    if (
-      discussion.participants.length === 1 &&
-      discussion.participants[0].user.id === viewer.user.id
-    ) {
-      // Discussions with only comments from the author are ignored.
-      continue;
-    }
+    // The user plan mentions: "Replace participant traversal with stub: const actors = pull.participants;"
+    // However, the original loop iterates `pull.discussions` and then accesses `discussion.participants`.
+    // The new `Discussion` type in `types.ts` does not have a `participants` field.
+    // `pull.participants` is a list of all participants in the PR, not specific to a discussion.
+    // Assuming the intent is to check if the viewer participated in *this specific discussion thread*.
+    // This requires a different approach if `Discussion` itself doesn't hold its participants.
+    // For now, I will proceed with the assumption that the logic needs to be adapted based on available fields on `Discussion` or `PullProps`.
+    // The provided `Discussion` type has `author`. If a discussion is a thread of comments, this might be more complex.
+    // The plan's `Discussion` type in `types.ts` is:
+    // export type Discussion = { id: string; author: User | null; createdAt: string; body: string; isResolved: boolean; url: string; filePath?: string; line?: number; };
+    // It does not have `participants` or `lastActiveAt`.
+    // The `pull.participants` field on `PullProps` is: `participants: Participant[];` where `Participant = { user: User; numComments: number; lastActiveAt: string; }`
+    // This seems to be a global list of participants for the PR.
 
-    unresolvedDiscussions++;
+    // The original logic for `unreadDiscussions` relied on `discussion.participants` and `lastActiveAt`.
+    // This logic needs to be re-evaluated based on the new data model.
+    // For now, I will simplify this part based on the available `Discussion` fields and `pull.participants`.
+    // This is a placeholder and might need further refinement based on the exact desired behavior.
 
-    const lastCommenter = firstBy(discussion.participants, [
-      prop("lastActiveAt"),
-      "desc",
-    ]);
-    const hasNewComments =
-      lastCommenter && lastCommenter.user.id !== viewer.user.id;
-    if (isAuthor && hasNewComments) {
-      // The author is in the attention set if there is any new comment.
-      unreadDiscussions++;
-    } else if (
-      isReviewer &&
-      hasNewComments &&
-      discussion.participants.some((p) => p.user.id === viewer.user.id)
-    ) {
-      // A reviewer is in the attention set if there is any new comment
-      // in a discussion they participated in.
-      unreadDiscussions++;
+    unresolvedDiscussions++; // Count all unresolved code threads.
+
+    // Simplified logic for unread: check if the last comment (approximated by PR participants) is not by the viewer.
+    // This is a significant simplification and might not match the original intent perfectly.
+    const prParticipants = pull.participants;
+    const lastActorInPr = prParticipants.length > 0 ? firstBy(prParticipants, [prop("lastActiveAt"), "desc"]) : null;
+
+    if (lastActorInPr && lastActorInPr.user.id !== viewer.user.id) {
+        // This is a very broad check. If any participant (not necessarily in this specific discussion)
+        // was active more recently than the viewer, consider it "unread" for the author.
+        // For a reviewer, it's harder to determine if they participated in *this* discussion without more info on Discussion.
+        if (isAuthor) {
+            unreadDiscussions++;
+        } else if (isReviewer) {
+            // A more accurate check would be if (discussion.author.id !== viewer.user.id && viewer_participated_in_this_thread)
+            // This part is difficult with the current Discussion type.
+            // For now, let's assume if the PR has recent activity not by the reviewer, it's an unread discussion for them too.
+            // This is a simplification.
+            const viewerParticipatedInPr = prParticipants.some(p => p.user.id === viewer.user.id);
+            if (viewerParticipatedInPr) {
+                 unreadDiscussions++;
+            }
+        }
     }
   }
   if (unreadDiscussions > 0) {

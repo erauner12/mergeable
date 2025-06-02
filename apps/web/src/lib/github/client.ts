@@ -2,22 +2,22 @@ import { throttling } from "@octokit/plugin-throttling";
 import type { Endpoints } from "@octokit/types";
 import { Octokit } from "octokit";
 import { isNonNull, isNonNullish } from "remeda";
+// import { // This block is duplicated and will be removed
+//   CheckConclusionState,
+//   PullRequestReviewDecision,
+//   PullRequestReviewState,
+// } from "../../../generated/gql/graphql";
 import {
   CheckConclusionState,
   PullRequestReviewDecision,
   PullRequestReviewState,
+  StatusState,
+  type CheckRun,
+  type StatusContext,
+  type SearchQuery,
+  type SearchFullQuery,
 } from "../../../generated/gql/graphql";
-import {
-  CheckConclusionState,
-  PullRequestReviewDecision,
-  PullRequestReviewState,
-  StatusState, // ADDED
-  type CheckRun, // ADDED
-  type StatusContext, // ADDED
-  type SearchQuery, // ADDED
-  type SearchFullQuery, // ADDED
-} from "../../../generated/gql/graphql";
-import { SearchDocument, SearchFullDocument } from "../../../generated/gql/graphql"; // ADDED
+import { SearchDocument, SearchFullDocument } from "../../../generated/gql/graphql";
 import { prepareQuery } from "./search";
 import {
   hasLatestOpinionatedReviews,
@@ -28,7 +28,6 @@ import type {
   Check,
   CheckState,
   Discussion,
-  // Endpoint, // Removed Endpoint type import from here, it's defined locally
   Participant,
   Profile,
   PullProps,
@@ -38,18 +37,16 @@ import type {
 import type { Actor } from "./type-guards";
 import type { CommentBlockInput } from "../repoprompt";
 
-// Type aliases for Octokit responses
-type IssueComment = Endpoints["GET /repos/{owner}/{repo}/issues/{issue_number}/comments"]["response"]["data"][number];
+// Define MyOctokit once near the top
+const MyOctokit = Octokit.plugin(throttling);
+
+// Type aliases for Octokit responses - keep only one set
 type IssueComment = Endpoints["GET /repos/{owner}/{repo}/issues/{issue_number}/comments"]["response"]["data"][number];
 type PullReview = Endpoints["GET /repos/{owner}/{repo}/pulls/{pull_number}/reviews"]["response"]["data"][number];
 type PullReviewComment = Endpoints["GET /repos/{owner}/{repo}/pulls/{pull_number}/comments"]["response"]["data"][number];
-type UserTeam = Endpoints["GET /user/teams"]["response"]["data"][number];
 
-// ADDED: Define PullNode based on the expected structure from SearchQuery/SearchFullQuery
 type PullNode = Extract<NonNullable<SearchQuery["search"]["edges"]>[number], { node: any }>["node"];
 
-
-// single commit item returned by pulls.listCommits
 export type PullRequestCommit = Endpoints["GET /repos/{owner}/{repo}/pulls/{pull_number}/commits"]["response"]["data"][number];
 
 export type Endpoint = {
@@ -104,64 +101,62 @@ export async function getPullRequestDiff(
 
 export class DefaultGitHubClient implements GitHubClient {
   private octokits: Record<string, Octokit> = {};
-  private commentCache: Map<string, Promise<CommentBlockInput[]>> = new Map(); // Add commentCache definition
+  private commentCache: Map<string, Promise<CommentBlockInput[]>> = new Map();
 
-  private getOctokit(endpoint: Endpoint): Octokit { // ADDED METHOD
+  private getOctokit(endpoint: Endpoint): Octokit {
     if (!this.octokits[endpoint.auth]) {
-      this.octokits[endpoint.auth] = new MyOctokit({ // Use MyOctokit to include throttling
+      this.octokits[endpoint.auth] = new MyOctokit({
         auth: endpoint.auth,
         baseUrl: endpoint.baseUrl,
-        // throttle options will be taken from MyOctokit defaults
       });
     }
     return this.octokits[endpoint.auth];
   }
 
   async getViewer(endpoint: Endpoint): Promise<Profile> {
-    const octokit = this.getOctokit(endpoint); // MODIFIED: use helper
+    const octokit = this.getOctokit(endpoint);
     const userResponse = await octokit.rest.users.getAuthenticated();
     const user: User = {
       id: userResponse.data.node_id,
       name: userResponse.data.login,
       avatarUrl: userResponse.data.avatar_url,
-    bot: false,
-  };
-  const teamsResponse = await octokit.paginate("GET /user/teams", { // octokit is already from getOctokit
-    per_page: 100,
-  });
-  const teams: Team[] = teamsResponse.map((obj: Endpoints["GET /user/teams"]["response"]["data"][number]) => ({ // MODIFIED: added type for obj
-    id: obj.node_id,
-    name: `${obj.organization.login}/${obj.slug}`,
-  }));
-  return { user, teams };
-}
+      bot: false, // Assuming authenticated user is not a bot
+    };
+    const teamsResponse = await octokit.paginate("GET /user/teams", {
+      per_page: 100,
+    });
+    const teams: Team[] = teamsResponse.map((obj: Endpoints["GET /user/teams"]["response"]["data"][number]) => ({
+      id: obj.node_id,
+      name: `${obj.organization.login}/${obj.slug}`,
+    }));
+    return { user, teams };
+  }
 
-async searchPulls(
-  endpoint: Endpoint,
-  search: string,
-  orgs: string[],
-  limit: number,
-): Promise<PullProps[]> {
-  const q = prepareQuery(search, orgs);
-  const useFull = Boolean(import.meta.env.MERGEABLE_EXTENDED_SEARCH);
-  const query = useFull
-    ? (SearchFullDocument.toString() as string)
-    : (SearchDocument.toString() as string);
+  async searchPulls(
+    endpoint: Endpoint,
+    search: string,
+    orgs: string[],
+    limit: number,
+  ): Promise<PullProps[]> {
+    const q = prepareQuery(search, orgs);
+    const useFull = Boolean(import.meta.env.MERGEABLE_EXTENDED_SEARCH);
+    const query = useFull
+      ? (SearchFullDocument.toString() as string)
+      : (SearchDocument.toString() as string);
 
-  const octokit = this.getOctokit(endpoint); // MODIFIED: use helper
-  const data = await octokit.graphql<SearchQuery | SearchFullQuery>(query, { // MODIFIED: Add explicit generic
-    q,
-    limit,
-  });
-  return (
-    data.search.edges
-      ?.filter(isNonNull)
-      .map((n) => this.makePull(n.node as PullNode)) // MODIFIED: Cast n.node to PullNode or similar from GQL types
-      .filter(isNonNull) ?? []
-  );
-}
+    const octokit = this.getOctokit(endpoint);
+    const data = await octokit.graphql<SearchQuery | SearchFullQuery>(query, {
+      q,
+      limit,
+    });
+    return (
+      data.search.edges
+        ?.filter(isNonNull)
+        .map((edge) => this.makePull(edge.node as PullNode))
+        .filter(isNonNull) ?? []
+    );
+  }
 
-  // New method: fetchPullComments
   async fetchPullComments(
     endpoint: Endpoint,
     owner: string,
@@ -175,7 +170,6 @@ async searchPulls(
 
     const promise = this._fetchPullCommentsLogic(endpoint, owner, repo, number);
     this.commentCache.set(cacheKey, promise);
-    // Clear cache entry if promise rejects to allow retries
     promise.catch(() => this.commentCache.delete(cacheKey));
     return promise;
   }
@@ -186,7 +180,7 @@ async searchPulls(
     repo: string,
     number: number,
   ): Promise<CommentBlockInput[]> {
-    const octokit = this.getOctokit(endpoint); // MODIFIED: use helper
+    const octokit = this.getOctokit(endpoint);
     const results: CommentBlockInput[] = [];
   
     // 1. Fetch issue comments (general comments on the PR)
@@ -197,8 +191,8 @@ async searchPulls(
         issue_number: number,
         per_page: 100,
       });
-      issueComments.forEach((comment: IssueComment) => { // MODIFIED: Use non-prefixed type
-        if (comment.body) { // Ensure there's a body
+      issueComments.forEach((comment: IssueComment) => {
+        if (comment.body) {
           results.push({
             id: `issuecomment-${comment.id}`,
             kind: "comment",
@@ -222,8 +216,7 @@ async searchPulls(
         pull_number: number,
         per_page: 100,
       });
-      reviews.forEach((review: PullReview) => { // MODIFIED: Use non-prefixed type
-        // Only include reviews that have a body and are not just pending
+      reviews.forEach((review: PullReview) => {
         if (review.body && review.state !== "PENDING") {
           results.push({
             id: `review-${review.id}`,
@@ -232,7 +225,7 @@ async searchPulls(
             commentBody: review.body_text || review.body || "",
             author: review.user?.login || "unknown",
             authorAvatarUrl: review.user?.avatar_url,
-            timestamp: review.submitted_at || new Date().toISOString(), // submitted_at can be null for pending
+            timestamp: review.submitted_at || new Date().toISOString(),
           });
         }
       });
@@ -249,10 +242,9 @@ async searchPulls(
         per_page: 100,
       });
 
-      // Group comments by path and original_line to form threads
       const threads: Record<string, PullReviewComment[]> = {};
-      reviewComments.forEach((comment: PullReviewComment) => { // MODIFIED: Use non-prefixed type
-        if (!comment.path || typeof comment.original_line === 'undefined' || comment.original_line === null) return; // Skip comments not tied to a specific line/path
+      reviewComments.forEach((comment: PullReviewComment) => {
+        if (!comment.path || typeof comment.original_line === 'undefined' || comment.original_line === null) return;
         const threadKey = `${comment.path}:${comment.original_line}`;
         if (!threads[threadKey]) {
           threads[threadKey] = [];
@@ -275,7 +267,7 @@ async searchPulls(
             kind: "comment",
             header: `### THREAD ON ${firstComment.path}:${firstComment.original_line}`,
             commentBody: threadBody,
-            author: firstComment.user?.login || "unknown", // Author of the first comment in thread
+            author: firstComment.user?.login || "unknown",
             authorAvatarUrl: firstComment.user?.avatar_url,
             timestamp: firstComment.created_at,
             filePath: firstComment.path,
@@ -287,20 +279,19 @@ async searchPulls(
       console.error("Failed to fetch review comments (threads):", error);
     }
     
-    // Sort all collected blocks by timestamp
     results.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
 
     return results;
   }
 
-  private makePull(prNode: any): PullProps { // TODO: Replace 'any' with the correct GraphQL PullRequest type from SearchQuery/SearchFullQuery
-    const discussions: Discussion[] = []; // This now uses the updated Discussion type from types.ts
+  private makePull(prNode: PullNode): PullProps {
+    const discussions: Discussion[] = [];
     const participants: Participant[] = [];
 
     for (const node of prNode.comments?.nodes ?? []) {
       if (!node) continue;
       this.addOrUpdateParticipant(participants, node.author, node.createdAt);
-      discussions.push({ // This object structure should now match the new Discussion type
+      discussions.push({
         id: node.id,
         author: this.makeUser(node.author),
         createdAt: this.toDate(node.createdAt),
@@ -313,7 +304,8 @@ async searchPulls(
     if (hasLatestOpinionatedReviews(prNode)) {
       for (const node of prNode.latestOpinionatedReviews.nodes ?? []) {
         if (!node) continue;
-        this.addOrUpdateParticipant(participants, node.author, node.createdAt);
+        // Use submittedAt if available, otherwise createdAt for participant activity
+        this.addOrUpdateParticipant(participants, node.author, node.submittedAt ?? node.createdAt);
       }
     }
 
@@ -327,18 +319,23 @@ async searchPulls(
         );
       }
     }
+    
+    const mqState = prNode.mergeQueueEntry?.state;
 
     return {
       id: prNode.id,
-      repo: `${prNode.repository.owner.login}/${prNode.repository.name}`, // Construct repo string
+      repo: `${prNode.repository.owner.login}/${prNode.repository.name}`,
       number: prNode.number,
       title: prNode.title,
-      body: prNode.bodyHTML || prNode.bodyText || prNode.body, // Handle different body fields
-      state: this.toPullState(prNode), // Use helper to map state
-      checkState: this.toCheckStateFromRollup(prNode.statusCheckRollup), // Use helper for check state
-      queueState: hasMergeQueueEntry(prNode) && prNode.mergeQueueEntry?.mergeableState === "MERGEABLE" ? "mergeable" :
-                  hasMergeQueueEntry(prNode) && prNode.mergeQueueEntry?.mergeableState === "UNMERGEABLE" ? "unmergeable" :
-                  "pending", // Map queue state
+      body: prNode.bodyHTML || prNode.bodyText || prNode.body,
+      state: this.toPullState(prNode),
+      checkState: this.toCheckStateFromRollup(prNode.statusCheckRollup),
+      queueState:
+        hasMergeQueueEntry(prNode) && mqState === "MERGEABLE"
+          ? "mergeable"
+          : hasMergeQueueEntry(prNode) && mqState === "UNMERGEABLE"
+            ? "unmergeable"
+            : "pending",
       createdAt: this.toDate(prNode.createdAt),
       updatedAt: this.toDate(prNode.updatedAt),
       enqueuedAt: hasMergeQueueEntry(prNode) ? this.toDate(prNode.mergeQueueEntry.enqueuedAt) : undefined,
@@ -363,10 +360,10 @@ async searchPulls(
             return (
               reviews
                 ?.filter(
-                  (n: any) => // TODO: type 'n' correctly from GQL
+                  (n: any) =>
                     n.state !== PullRequestReviewState.Pending,
                 )
-                .map((n: any) => ({ // TODO: type 'n' correctly from GQL
+                .map((n: any) => ({
                   author: this.makeUser(n.author),
                   collaborator: n.authorCanPushToRepository,
                   approved: n.state === PullRequestReviewState.Approved,
@@ -376,7 +373,6 @@ async searchPulls(
         : [],
       checks: hasStatusCheckRollup(prNode)
         ? (() => {
-            // Buffer as unknown[], then narrow → (CheckRun | StatusContext)[]
             const rawContexts: unknown[] =
               prNode.statusCheckRollup?.contexts?.nodes ?? [];
 
@@ -388,13 +384,12 @@ async searchPulls(
           })()
         : [],
       discussions,
-      // Add new fields here
-      branch: prNode.headRefName ?? "", // Provide a fallback if headRefName might be undefined
+      branch: prNode.headRefName ?? "",
       files:
         prNode.files?.nodes
           ?.filter(isNonNullish)
           .map((f: { path: string }) => f.path) ?? [],
-      participants, // ADDED
+      participants,
     };
   }
 
@@ -412,22 +407,23 @@ async searchPulls(
         bot: obj.__typename === "Bot",
       };
     } else {
-      // No user provided, or unsupported type.
       return null;
     }
   }
 
-  private makeTeam(obj: Actor): Team | null { // ADDED helper
-    if (obj?.__typename === "Team") {
+  private makeTeam(obj: Actor): Team | null {
+    // Apply cast as Actor type in type-guards.ts cannot be updated (file not provided)
+    if ((obj as any)?.__typename === "Team") {
+      const team = obj as { __typename: "Team"; id: string; name?: string; slug?: string };
       return {
-        id: obj.id,
-        name: obj.name ?? obj.slug, // Use name or slug
+        id: team.id,
+        name: team.name ?? team.slug ?? "",
       };
     }
     return null;
   }
 
-  private toPullState(prNode: any): PullProps["state"] { // ADDED helper
+  private toPullState(prNode: PullNode): PullProps["state"] {
     if (prNode.isDraft) return "draft";
     if (prNode.merged) return "merged";
     if (prNode.closed) return "closed";
@@ -436,47 +432,32 @@ async searchPulls(
     return "pending";
   }
 
-  private toCheckStateFromRollup(rollup: any): CheckState { // ADDED helper
+  private toCheckStateFromRollup(rollup: PullNode["statusCheckRollup"]): CheckState {
     if (!rollup || !rollup.state) return "pending";
     switch (rollup.state) {
-      case "SUCCESS": return "success";
-      case "ERROR": return "error";
-      case "FAILURE": return "failure";
+      case StatusState.Success: return "success";
+      case StatusState.Error: return "error";
+      case StatusState.Failure: return "failure";
+      case StatusState.Pending: return "pending";
       default: return "pending";
     }
   }
-
-  private makeUser(obj: Actor): User | null {
-    if (
-      obj?.__typename === "Bot" ||
-      obj?.__typename === "Mannequin" ||
-      obj?.__typename === "User" ||
-      obj?.__typename === "EnterpriseUserAccount"
-    ) {
-      return {
-        id: obj.id,
-        name: obj.login,
-        avatarUrl: `${obj.avatarUrl}`,
-        bot: obj.__typename === "Bot",
-      };
-    } else {
-      // No user provided, or unsupported type.
-      return null;
-    }
-  }
-
+  
   private makeCheck(obj: CheckRun | StatusContext): Check {
-    if ("name" in obj) {
+    if ("name" in obj) { // CheckRun
       return {
         name: obj.name,
         state:
           obj.conclusion === CheckConclusionState.Success
             ? "success"
+            // Map other CheckConclusionState to CheckState if needed
+            : obj.conclusion === CheckConclusionState.Failure || obj.conclusion === CheckConclusionState.Cancelled || obj.conclusion === CheckConclusionState.TimedOut || obj.conclusion === CheckConclusionState.ActionRequired || obj.conclusion === CheckConclusionState.Stale || obj.conclusion === CheckConclusionState.Skipped
+            ? "failure"
             : "pending",
         description: obj.title ?? obj.name,
         url: obj.url ? String(obj.url) : null,
       };
-    } else {
+    } else { // StatusContext
       return {
         name: obj.context,
         state: this.toCheckState(obj.state),
@@ -491,9 +472,10 @@ async searchPulls(
       return new Date(v).toISOString();
     } else if (v instanceof Date) {
       return v.toISOString();
-    } else {
-      return String(v);
+    } else if (typeof v === "string") {
+        return v;
     }
+    return String(v);
   }
 
   private maxDate(a: string, b: string) {

@@ -236,7 +236,7 @@ describe("buildRepoPromptText", () => {
       expect(diffBlock.header).toBe("### FULL PR DIFF");
       expect(diffBlock.patch).toBe("dummy pr diff content");
     } else {
-      fail("Diff block not found or not of correct type");
+      throw new Error("Diff block not found or not of correct type");
     }
     
     // promptText contains initially selected blocks (PR details + PR diff)
@@ -297,7 +297,7 @@ describe("buildRepoPromptText", () => {
       expect(diffBlock.header).toContain('### LAST COMMIT (lastsha — "Last commit title")');
       expect(diffBlock.patch).toBe("diff for lastsha1");
     } else {
-      fail("Last commit diff block not found or not of correct type");
+      throw new Error("Last commit diff block not found or not of correct type");
     }
   });
 
@@ -331,7 +331,7 @@ describe("buildRepoPromptText", () => {
       expect(diffBlock1.header).toContain('### COMMIT (specsha — "Specific commit ONE")');
       expect(diffBlock1.patch).toBe("diff for specsha1");
     } else {
-      fail("Specific commit diff block 1 not found or not of correct type");
+      throw new Error("Specific commit diff block 1 not found or not of correct type");
     }
 
     const diffBlock2 = blocks.find(b => b.id === `diff-commit-specsha2`);
@@ -340,7 +340,7 @@ describe("buildRepoPromptText", () => {
       expect(diffBlock2.header).toContain('### COMMIT (specsha — "Specific commit TWO")');
       expect(diffBlock2.patch).toBe("diff for specsha2");
     } else {
-      fail("Specific commit diff block 2 not found or not of correct type");
+      throw new Error("Specific commit diff block 2 not found or not of correct type");
     }
   });
 });

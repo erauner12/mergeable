@@ -213,11 +213,16 @@ export async function buildRepoPromptText(
   allPromptBlocks.push(prDetailsBlock);
   initiallySelectedBlocks.push(prDetailsBlock);
 
-
   // 1. Comments, Reviews, Threads (if requested)
   if (diffOptions.includeComments) {
-    if (endpoint) { // fetchPullComments requires an endpoint
-      const commentBlocks = await fetchPullComments(endpoint, owner, repo, pull.number);
+    if (endpoint) {
+      // fetchPullComments requires an endpoint
+      const commentBlocks = await fetchPullComments(
+        endpoint,
+        owner,
+        repo,
+        pull.number,
+      );
       allPromptBlocks.push(...commentBlocks);
       // Comment blocks are NOT initially selected by default for the promptText
     } else {
@@ -300,9 +305,9 @@ export async function buildRepoPromptText(
           commitMessageMap.get(sha) || "Unknown commit message";
         const block: DiffBlockInput = {
           id: `diff-commit-${sha}`,
-          kind: "diff";
-          header: `### COMMIT (${shortSha} — "${commitTitle}")`;
-          patch: commitDiff;
+          kind: "diff",
+          header: `### COMMIT (${shortSha} — "${commitTitle}")`,
+          patch: commitDiff,
         };
         allPromptBlocks.push(block);
         initiallySelectedBlocks.push(block); // Assuming specific commits are also initially selected if requested
@@ -310,7 +315,9 @@ export async function buildRepoPromptText(
     }
   }
 
-  const combinedInitialContent = formatListOfPromptBlocks(initiallySelectedBlocks);
+  const combinedInitialContent = formatListOfPromptBlocks(
+    initiallySelectedBlocks,
+  );
 
   const basePrompt = await getBasePrompt();
   const promptPayloadParts: string[] = [

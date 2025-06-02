@@ -19,13 +19,14 @@ export function DiffPickerDialog({
 }: DiffPickerDialogProps) {
   const [includePr, setIncludePr] = useState(true);
   const [includeLastCommit, setIncludeLastCommit] = useState(true);
+  const [includeComments, setIncludeComments] = useState(false); // New state
 
   useEffect(() => {
     if (isOpen) {
       // Reset state based on initial prop when dialog opens or initial prop changes
-      // If initial.commits was present, it's ignored for these checkboxes.
       setIncludePr(initial?.includePr ?? true);
       setIncludeLastCommit(initial?.includeLastCommit ?? true);
+      setIncludeComments(initial?.includeComments ?? false); // Reset new state
     }
   }, [isOpen, initial]);
 
@@ -33,11 +34,12 @@ export function DiffPickerDialog({
     onConfirm({
       includePr,
       includeLastCommit,
+      includeComments, // Pass new option
       commits: [], // Always pass an empty array for commits
     });
   };
 
-  const canConfirm = includePr || includeLastCommit;
+  const canConfirm = includePr || includeLastCommit || includeComments; // Updated validation
 
   return (
     <Dialog
@@ -48,7 +50,7 @@ export function DiffPickerDialog({
       canEscapeKeyClose={true}
     >
       <DialogBody>
-        <p>Choose which diffs to include in the prompt:</p>
+        <p>Choose which diffs and comments to include in the prompt:</p>
         <Checkbox
           label="Full PR diff"
           checked={includePr}
@@ -60,6 +62,14 @@ export function DiffPickerDialog({
           checked={includeLastCommit}
           onChange={(e) =>
             setIncludeLastCommit((e.target as HTMLInputElement).checked)
+          }
+          style={{ marginBottom: "10px" }} // Added margin
+        />
+        <Checkbox // New checkbox for comments
+          label="Review comments & discussions"
+          checked={includeComments}
+          onChange={(e) =>
+            setIncludeComments((e.target as HTMLInputElement).checked)
           }
         />
         {/* Removed \"Or, choose specific commits\" section and loading placeholder */}

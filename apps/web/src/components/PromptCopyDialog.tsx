@@ -1,5 +1,6 @@
 import {
   Button,
+  Checkbox,
   Classes,
   Collapse,
   Dialog,
@@ -12,9 +13,11 @@ import {
   ButtonGroup,
 } from "@blueprintjs/core";
 import { IconNames } from "@blueprintjs/icons";
-import React, { useState } from "react";
-import type { DiffBlockInput } from "../lib/repoprompt";
-import styles from "./PromptCopyDialog.module.scss"; // Create this SCSS file too
+// import React, { useState, useEffect, useMemo } from "react"; // REMOVED React default import
+import { useState, useEffect, useMemo } from "react"; // ADDED (React default import removed)
+import type { PromptBlock } from "../lib/repoprompt"; // REMOVED DiffBlockInput, CommentBlockInput, DiffOptions
+import { formatPromptBlock } from "../lib/repoprompt"; // Import formatter
+import styles from "./PromptCopyDialog.module.scss";
 
 // Helper for copying text to clipboard
 async function copyTextToClipboard(text: string): Promise<boolean> {
@@ -43,12 +46,13 @@ async function copyTextToClipboard(text: string): Promise<boolean> {
 
 interface PromptCopyDialogProps {
   isOpen: boolean;
-  promptText: string; // Full prompt for "Copy all"
-  blocks: DiffBlockInput[]; // Individual blocks for section-wise copy
+  initialPromptText: string; // MODIFIED: Renamed from _initialPromptText
+  blocks: PromptBlock[];
+  initialSelectedBlockIds?: Set<string>; // IDs of blocks initially selected by DiffPickerDialog choices
   onClose: () => void;
   prTitle?: string;
-  repoPromptUrl?: string; // destination to open
-  onOpenRepoPrompt?: () => void; // optional callback (logging, side-effects)
+  repoPromptUrl?: string;
+  onOpenRepoPrompt?: (selectedText: string) => void; // Passes currently selected text
 }
 
 interface CopyState {
@@ -58,15 +62,41 @@ interface CopyState {
 
 export function PromptCopyDialog({
   isOpen,
-  promptText,
+  initialPromptText: _initialPromptText, // MODIFIED: Renamed from initialPromptText
   blocks,
+  initialSelectedBlockIds,
   onClose,
   prTitle,
   repoPromptUrl,
   onOpenRepoPrompt,
 }: PromptCopyDialogProps) {
-  const [openCollapsible, setOpenCollapsible] = useState<Record<number, boolean>>({});
+  const [openCollapsible, setOpenCollapsible] = useState<Record<string, boolean>>({}); // Use block.id as key
   const [copyStatus, setCopyStatus] = useState<CopyState | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+
+  // Initialize selectedIds and openCollapsible when dialog opens or blocks/initial selections change
+  useEffect(() => {
+    if (isOpen) {
+      const initialCollapseState: Record<string, boolean> = {};
+      const defaultSelected = new Set<string>();
+
+      blocks.forEach((block) => {
+        // Default to collapsed if content is long, otherwise open
+        const content = block.kind === "diff" ? block.patch : block.commentBody;
+        initialCollapseState[block.id] = content.length < 1000;
+
+        if (initialSelectedBlockIds?.has(block.id)) {
+          defaultSelected.add(block.id);
+        } else if (block.id.startsWith("pr-details")) { // Always select PR details by default
+             defaultSelected.add(block.id);
+        }
+        // Other comment blocks are not selected by default unless specified by initialSelectedBlockIds
+      });
+      setOpenCollapsible(initialCollapseState);
+      setSelectedIds(initialSelectedBlockIds || defaultSelected);
+    }
+  }, [isOpen, blocks, initialSelectedBlockIds]);
+
 
   const handleCopy = async (textToCopy: string, id: string) => {
     const success = await copyTextToClipboard(textToCopy);
@@ -79,21 +109,46 @@ export function PromptCopyDialog({
     }
   };
 
-  const toggleCollapse = (index: number) => {
-    setOpenCollapsible(prev => ({ ...prev, [index]: !prev[index] }));
+  const toggleCollapse = (blockId: string) => {
+    setOpenCollapsible(prev => ({ ...prev, [blockId]: !prev[blockId] }));
   };
+
+  const toggleSelected = (blockId: string) => {
+    setSelectedIds(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(blockId)) {
+        newSet.delete(blockId);
+      } else {
+        newSet.add(blockId);
+      }
+      return newSet;
+    });
+  };
+
+  const currentSelectedText = useMemo(() => {
+    return blocks
+      .filter(block => selectedIds.has(block.id))
+      .map(block => formatPromptBlock(block)) // Use the formatter
+      .join("\n")
+      .trimEnd();
+  }, [blocks, selectedIds]);
   
-  // Reset collapsible state when dialog opens/closes or blocks change
-  React.useEffect(() => {
-    if (isOpen) {
-      const initialCollapseState: Record<number, boolean> = {};
-      blocks.forEach((_, index) => {
-        // Default to collapsed if patch is long, otherwise open
-        initialCollapseState[index] = blocks[index].patch.length < 1000;
-      });
-      setOpenCollapsible(initialCollapseState);
+  const renderBlockContent = (block: PromptBlock) => {
+    if (block.kind === "diff") {
+      return <pre className={`${Classes.CODE_BLOCK} ${styles.codeBlock}`}>{block.patch}</pre>;
     }
-  }, [isOpen, blocks]);
+    // block.kind === "comment"
+    return (
+      <div className={styles.commentBlockContent}>
+        <div className={styles.commentMeta}>
+          {block.authorAvatarUrl && <img src={block.authorAvatarUrl} alt={block.author} className={styles.avatar} />}
+          <span><strong>@{block.author}</strong> · {new Date(block.timestamp).toLocaleDateString("en-CA", { year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: 'numeric' })}</span>
+          {block.filePath && <span className={styles.filePath}> ({block.filePath}{block.line ? `:${block.line}` : ''})</span>}
+        </div>
+        <pre className={`${Classes.RUNNING_TEXT} ${styles.codeBlock}`}>{block.commentBody}</pre>
+      </div>
+    );
+  };
 
 
   return (
@@ -108,36 +163,41 @@ export function PromptCopyDialog({
     >
       <DialogBody>
         <div className={styles.scrollableContent}>
-          {blocks.map((block, index) => (
-            <div key={index} className={styles.promptBlock}>
+          {blocks.map((block) => (
+            <div key={block.id} className={styles.promptBlock}>
               <div className={styles.blockHeader}>
+                <Checkbox
+                  checked={selectedIds.has(block.id)}
+                  onChange={() => toggleSelected(block.id)}
+                  className={styles.blockCheckbox}
+                />
                 <H5>{block.header}</H5>
-                <div>
-                  <Tooltip content={openCollapsible[index] ? "Collapse" : "Expand"}>
+                <div className={styles.blockActions}>
+                  <Tooltip content={openCollapsible[block.id] ? "Collapse" : "Expand"}>
                     <Button
                       minimal
-                      icon={openCollapsible[index] ? IconNames.CHEVRON_UP : IconNames.CHEVRON_DOWN}
-                      onClick={() => toggleCollapse(index)}
+                      icon={openCollapsible[block.id] ? IconNames.CHEVRON_UP : IconNames.CHEVRON_DOWN}
+                      onClick={() => toggleCollapse(block.id)}
                       small
                     />
                   </Tooltip>
-                  <Tooltip content={copyStatus?.id === `block-${index}` && copyStatus.copied ? "Copied!" : "Copy section"}>
+                  <Tooltip content={copyStatus?.id === block.id && copyStatus.copied ? "Copied!" : `Copy section: ${block.header.substring(0,20)}...`}>
                     <Button
                       minimal
-                      icon={copyStatus?.id === `block-${index}` && copyStatus.copied ? IconNames.SAVED : IconNames.CLIPBOARD}
-                      onClick={() => handleCopy(`${block.header}\n${block.patch}`, `block-${index}`)}
+                      icon={copyStatus?.id === block.id && copyStatus.copied ? IconNames.SAVED : IconNames.CLIPBOARD}
+                      onClick={() => handleCopy(formatPromptBlock(block), block.id)} // Format individual block for copy
                       small
                     />
                   </Tooltip>
-                   {! (copyStatus?.id === `block-${index}` && !copyStatus.copied) ? null : (
+                   {! (copyStatus?.id === block.id && !copyStatus.copied) ? null : (
                      <Tooltip content="Failed to copy" intent={Intent.DANGER}>
                         <Icon icon={IconNames.ERROR} intent={Intent.DANGER} style={{ marginLeft: '4px' }} />
                      </Tooltip>
                    )}
                 </div>
               </div>
-              <Collapse isOpen={openCollapsible[index] ?? true}>
-                <pre className={`${Classes.CODE_BLOCK} ${styles.codeBlock}`}>{block.patch}</pre>
+              <Collapse isOpen={openCollapsible[block.id] ?? true}>
+                {renderBlockContent(block)}
               </Collapse>
             </div>
           ))}
@@ -147,11 +207,12 @@ export function PromptCopyDialog({
         actions={
           <ButtonGroup minimal={false} large={false}>
             <Button
-              icon={copyStatus?.id === 'all' && copyStatus.copied ? IconNames.SAVED : IconNames.CLIPBOARD}
-              text={copyStatus?.id === 'all' && copyStatus.copied ? "Copied!" : "Copy All"}
-              onClick={() => handleCopy(promptText, 'all')}
+              icon={copyStatus?.id === 'all_selected' && copyStatus.copied ? IconNames.SAVED : IconNames.CLIPBOARD}
+              text={copyStatus?.id === 'all_selected' && copyStatus.copied ? "Copied!" : "Copy Selected"}
+              onClick={() => handleCopy(currentSelectedText, 'all_selected')}
+              disabled={selectedIds.size === 0} // Disable if nothing selected
               rightIcon={
-                (copyStatus?.id === 'all' && !copyStatus.copied) ?
+                (copyStatus?.id === 'all_selected' && !copyStatus.copied) ?
                 <Tooltip content="Failed to copy" intent={Intent.DANGER} placement="top">
                   <Icon icon={IconNames.ERROR} intent={Intent.DANGER} />
                 </Tooltip>
@@ -165,7 +226,7 @@ export function PromptCopyDialog({
               onClick={() => {
                 if (repoPromptUrl) {
                   window.open(repoPromptUrl, '_blank');
-                  onOpenRepoPrompt?.();
+                  onOpenRepoPrompt?.(currentSelectedText); // Pass current selected text
                 }
               }}
               text="Open in RepoPrompt"

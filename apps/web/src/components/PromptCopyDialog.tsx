@@ -232,7 +232,8 @@ export function PromptCopyDialog({
   const renderBlockContent = (block: PromptBlock) => {
     if (block.kind === "diff") {
       // Check if this is the active diff block being managed by diffPatchData
-      const isActiveManagedDiffBlock = diffPatchData && block.id === diffPatchData.sourceBlockId;
+      const isActiveManagedDiffBlock =
+        diffPatchData && block.id === diffPatchData.sourceBlockId;
 
       if (isActiveManagedDiffBlock && selectedIds.has(block.id)) {
         if (hasPickedFiles) {
@@ -240,12 +241,13 @@ export function PromptCopyDialog({
           const currentDiffSelectionContent = buildClipboardPayload({
             selectedFiles: selectedFilePaths,
             allFiles: diffPatchData.allFilePaths, // diffPatchData is non-null here
-            patches: diffPatchData.patches,       // diffPatchData is non-null here
+            patches: diffPatchData.patches, // diffPatchData is non-null here
           });
+          const displayContent = currentDiffSelectionContent.trimEnd(); // ADDED trimEnd for display
           return (
             <pre className={`${Classes.CODE_BLOCK} ${styles.codeBlock}`}>
-              {currentDiffSelectionContent.length > 0
-                ? currentDiffSelectionContent
+              {displayContent.length > 0 // Use trimmed content for length check and display
+                ? displayContent
                 : "(No files selected or diff is empty)"}
             </pre>
           );
@@ -253,7 +255,7 @@ export function PromptCopyDialog({
           // User has not yet picked, or state was reset. Show the original full patch of this block.
           return (
             <pre className={`${Classes.CODE_BLOCK} ${styles.codeBlock}`}>
-              {block.patch}
+              {block.patch.trimEnd()} {/* ADDED trimEnd() */}
             </pre>
           );
         }
@@ -261,7 +263,7 @@ export function PromptCopyDialog({
       // For other diff blocks (if any) or if the main diff block isn't selected for detailed view, show its original patch
       return (
         <pre className={`${Classes.CODE_BLOCK} ${styles.codeBlock}`}>
-          {block.patch}
+          {block.patch.trimEnd()} {/* ADDED trimEnd() */}
         </pre>
       );
     }

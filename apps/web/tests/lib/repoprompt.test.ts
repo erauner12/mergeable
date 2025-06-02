@@ -5,10 +5,10 @@ import * as gh from "../../src/lib/github/client"; // ← stub network call
 import {
   buildRepoPromptText,
   buildRepoPromptUrl,
-  logRepoPromptCall,
   type ResolvedPullMeta,
   type CommentBlockInput, // Keep if needed for explicit typing of mockComments, otherwise remove
 } from "../../src/lib/repoprompt";
+import * as repopromptModule from "../../src/lib/repoprompt"; // ADDED: Namespace import
 import { isDiffBlock } from "../../src/lib/repoprompt.guards";
 import * as settings from "../../src/lib/settings";
 // Assuming mockPull is imported from a shared testing utility like "../testing"
@@ -20,18 +20,14 @@ import { mockPull } from "../testing";
 // However, the plan is that PullRow calls logRepoPromptCall.
 // For testing buildRepoPromptText, we might want to assert it *doesn't* call logRepoPromptCall.
 // For testing buildRepoPromptUrl, it definitely doesn't call it.
-// Let's mock it here to prevent actual logging during tests.
-vi.mock("../../src/lib/repoprompt", async (importOriginal) => {
-  const original = await importOriginal<typeof import("../../src/lib/repoprompt")>();
-  return {
-    ...original,
-    logRepoPromptCall: vi.fn(),
-  };
-});
+// REMOVED: vi.mock for "../../src/lib/repoprompt"
 
 // Mock fetchPullComments
 // const mockFetchPullComments = vi.fn(); // OLD: Causes TDZ
-let mockFetchPullComments: ReturnType<typeof vi.fn>; // NEW: Declare with let
+// let mockFetchPullComments: ReturnType<typeof vi.fn>; // NEW: Declare with let
+// We need this variable to exist *before* the hoisted factory runs, so use `var`
+// (var-bindings are hoisted and initialised with `undefined`, removing the TDZ)
+var mockFetchPullComments: ReturnType<typeof vi.fn>;
 
 vi.mock("../../src/lib/github/client", async (importOriginal) => {
   const originalClient = await importOriginal<typeof import("../../src/lib/github/client")>();
@@ -48,6 +44,8 @@ vi.mock("../../src/lib/github/client", async (importOriginal) => {
 
 
 describe("buildRepoPromptUrl", () => {
+  let logRepoPromptCallSpy: ReturnType<typeof vi.spyOn>; // ADDED: Spy variable
+
   beforeEach(() => {
     vi.spyOn(gh, "getPullRequestMeta").mockResolvedValue({
       branch: "fallback-branch",
@@ -55,6 +53,10 @@ describe("buildRepoPromptUrl", () => {
     });
     vi.spyOn(settings, "getDefaultRoot").mockResolvedValue("/tmp");
     // No need to mock diff functions for buildRepoPromptUrl
+    // ADDED: Initialize spy
+    logRepoPromptCallSpy = vi
+      .spyOn(repopromptModule, "logRepoPromptCall")
+      .mockImplementation(() => {});
   });
 
   afterEach(() => {
@@ -78,7 +80,7 @@ describe("buildRepoPromptUrl", () => {
     expect(urlObj.searchParams.get("workspace")).toBe("myrepo");
     // Updated expectation: URLSearchParams.get() decodes the value.
     expect(urlObj.searchParams.get("files")).toBe("src/main.ts,README.md");
-    expect(logRepoPromptCall).not.toHaveBeenCalled();
+    expect(logRepoPromptCallSpy).not.toHaveBeenCalled(); // UPDATED: Use spy
   });
 
   it("should resolve metadata and include it in the return", async () => {
@@ -120,6 +122,7 @@ describe("buildRepoPromptUrl", () => {
 });
 
 describe("buildRepoPromptText", () => {
+  let logRepoPromptCallSpy: ReturnType<typeof vi.spyOn>; // ADDED: Spy variable
   const mockResolvedMeta: ResolvedPullMeta = {
     owner: "owner",
     repo: "myrepo",
@@ -139,6 +142,10 @@ describe("buildRepoPromptText", () => {
     );
     vi.spyOn(settings, "getBasePrompt").mockResolvedValue("TEST_BASE_PROMPT");
     // getDefaultRoot is not called by buildRepoPromptText if meta (with rootPath) is passed
+    // ADDED: Initialize spy
+    logRepoPromptCallSpy = vi
+      .spyOn(repopromptModule, "logRepoPromptCall")
+      .mockImplementation(() => {});
   });
 
   afterEach(() => {
@@ -183,7 +190,7 @@ describe("buildRepoPromptText", () => {
     expect(promptText).not.toContain("### FULL PR DIFF");
     expect(promptText).not.toContain("### LAST COMMIT");
     expect(mockFetchPullComments).not.toHaveBeenCalled();
-    expect(logRepoPromptCall).not.toHaveBeenCalled();
+    expect(logRepoPromptCallSpy).not.toHaveBeenCalled(); // UPDATED: Use spy
   });
 
   it("should include comments if specified", async () => {

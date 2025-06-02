@@ -99,14 +99,23 @@ test("fetchPullComments should set 'resolved' flag correctly for comment threads
   });
 
   // Mock the thread resolution calls
-  mockOctokit.request.mockImplementation(async (route: string, params: any) => {
+  mockOctokit.request.mockImplementation(async (route: string, requestParams?: { owner?: string, repo?: string, comment_id?: number }) => {
     if (route === "GET /repos/{owner}/{repo}/pulls/comments/{comment_id}") {
-      if (params.comment_id === commentIdUnresolved)
-        return { data: { is_resolved: false } }; // Mock unresolved
-      if (params.comment_id === commentIdResolved)
-        return { data: { is_resolved: true } }; // Mock resolved
+      if (requestParams && typeof requestParams.comment_id === 'number') {
+        const currentCommentId = requestParams.comment_id;
+        if (currentCommentId === commentIdUnresolved) {
+          return { data: { is_resolved: false } }; // Mock unresolved
+        }
+        if (currentCommentId === commentIdResolved) {
+          return { data: { is_resolved: true } }; // Mock resolved
+        }
+        // If comment_id is present but doesn't match known IDs
+        return { data: { message: `unknown comment_id ${currentCommentId}` } };
+      }
+      // If params or params.comment_id is missing or not a number
+      return { data: { message: "bad params for comment_id route" } };
     }
-    return { data: {} };
+    return { data: { message: "fallback_route_in_mock" } };
   });
 
   const comments = await client.fetchPullComments(

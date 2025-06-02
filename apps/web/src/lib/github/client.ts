@@ -301,20 +301,15 @@ export class DefaultGitHubClient implements GitHubClient {
     // Helper: derive a stable key representing a single conversation thread
     // This new keying logic ensures that comments are grouped by their actual conversation root,
     // using `in_reply_to_id` if available, or the comment's own `id` if it's a new thread root.
-    // `pull_request_review_id` is used as an optional discriminator.
+    // GitHub comment IDs are unique within a repository, so the rootId is sufficient.
     // This works for both comments within a formal review and standalone inline comment threads.
     function getThreadKey(rc: ReviewCommentItem): string {
       // Root of the conversation: either the comment we reply to, or ourselves.
+      // GitHub comment IDs are unique within the repository.
       const rootId = rc.in_reply_to_id ?? rc.id;
-
-      // Optional discriminator: include review-id when present to avoid
-      // theoretical collisions across *different* reviews that happen to reuse
-      // the same root-id (extremely rare but free insurance).
-      return rc.pull_request_review_id
-        ? `${rootId}:${rc.pull_request_review_id}`
-        : `${rootId}`;
+      return String(rootId);
     }
-
+    
     // Only include comments with a user (should always be true)
     const validReviewComments = reviewCommentsResponse.filter(
       (rc) => !!rc.user,

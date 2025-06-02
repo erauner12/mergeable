@@ -62,7 +62,7 @@ interface CopyState {
 
 export function PromptCopyDialog({
   isOpen,
-  initialPromptText, // MODIFIED: Renamed from _initialPromptText
+  initialPromptText: _initialPromptText, // MODIFIED: Renamed from initialPromptText
   blocks,
   initialSelectedBlockIds,
   onClose,

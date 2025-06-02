@@ -19,11 +19,6 @@ import {
 } from "../../../generated/gql/graphql";
 import { SearchDocument, SearchFullDocument } from "../../../generated/gql/graphql";
 import { prepareQuery } from "./search";
-import {
-  hasLatestOpinionatedReviews,
-  hasMergeQueueEntry,
-  hasStatusCheckRollup,
-} from "./type-guards";
 import type {
   Check,
   CheckState,
@@ -36,16 +31,7 @@ import type {
 } from "./types";
 import type { Actor } from "./type-guards";
 import type { CommentBlockInput } from "../repoprompt";
-
-// Define MyOctokit once near the top
 const MyOctokit = Octokit.plugin(throttling);
-
-// Type aliases for Octokit responses - keep only one set
-type IssueComment = Endpoints["GET /repos/{owner}/{repo}/issues/{issue_number}/comments"]["response"]["data"][number];
-type PullReview = Endpoints["GET /repos/{owner}/{repo}/pulls/{pull_number}/reviews"]["response"]["data"][number];
-type PullReviewComment = Endpoints["GET /repos/{owner}/{repo}/pulls/{pull_number}/comments"]["response"]["data"][number];
-
-type PullNode = Extract<NonNullable<SearchQuery["search"]["edges"]>[number], { node: any }>["node"];
 
 export type PullRequestCommit = Endpoints["GET /repos/{owner}/{repo}/pulls/{pull_number}/commits"]["response"]["data"][number];
 
@@ -149,12 +135,19 @@ export class DefaultGitHubClient implements GitHubClient {
       q,
       limit,
     });
-    return (
-      data.search.edges
-        ?.filter(isNonNull)
-        .map((edge) => this.makePull(edge.node as PullNode))
-        .filter(isNonNull) ?? []
-    );
+    // OLD code:
+    // return (
+    //   data.search.edges
+    //     ?.filter(isNonNull)
+    //     .map((edge) => this.makePull(edge.node as PullNode))
+    //     .filter(isNonNull) ?? []
+    // );
+    // NEW code:
+    const edges = data.search.edges?.filter(isNonNull) ?? [];
+    const pulls = edges
+        .filter((e): e is NonNullable<typeof e> & { node: PullRequestNode } => isPullRequestNode(e.node))
+        .map(e => this.makePull(e.node));
+    return pulls;
   }
 
   async fetchPullComments(
@@ -181,135 +174,133 @@ export class DefaultGitHubClient implements GitHubClient {
     number: number,
   ): Promise<CommentBlockInput[]> {
     const octokit = this.getOctokit(endpoint);
-    const results: CommentBlockInput[] = [];
-  
-    // 1. Fetch issue comments (general comments on the PR)
-    try {
-      const issueComments = await octokit.paginate(octokit.rest.issues.listComments, {
+
+    // Fetch issue comments
+    const issueComments = await octokit.paginate(
+      octokit.rest.issues.listComments,
+      {
         owner,
         repo,
         issue_number: number,
         per_page: 100,
-      });
-      issueComments.forEach((comment: IssueComment) => {
-        if (comment.body) {
-          results.push({
-            id: `issuecomment-${comment.id}`,
-            kind: "comment",
-            header: `### ISSUE COMMENT by @${comment.user?.login || "unknown"}`,
-            commentBody: comment.body_text || comment.body || "",
-            author: comment.user?.login || "unknown",
-            authorAvatarUrl: comment.user?.avatar_url,
-            timestamp: comment.created_at,
-          });
-        }
-      });
-    } catch (error) {
-      console.error("Failed to fetch issue comments:", error);
-    }
-
-    // 2. Fetch pull request reviews (review summaries)
-    try {
-      const reviews = await octokit.paginate(octokit.rest.pulls.listReviews, {
-        owner,
-        repo,
-        pull_number: number,
-        per_page: 100,
-      });
-      reviews.forEach((review: PullReview) => {
-        if (review.body && review.state !== "PENDING") {
-          results.push({
-            id: `review-${review.id}`,
-            kind: "comment",
-            header: `### REVIEW by @${review.user?.login || "unknown"} (${review.state})`,
-            commentBody: review.body_text || review.body || "",
-            author: review.user?.login || "unknown",
-            authorAvatarUrl: review.user?.avatar_url,
-            timestamp: review.submitted_at || new Date().toISOString(),
-          });
-        }
-      });
-    } catch (error) {
-      console.error("Failed to fetch PR reviews:", error);
-    }
-
-    // 3. Fetch review comments (comments on specific lines in the diff, forming threads)
-    try {
-      const reviewComments = await octokit.paginate(octokit.rest.pulls.listReviewComments, {
-        owner,
-        repo,
-        pull_number: number,
-        per_page: 100,
-      });
-
-      const threads: Record<string, PullReviewComment[]> = {};
-      reviewComments.forEach((comment: PullReviewComment) => {
-        if (!comment.path || typeof comment.original_line === 'undefined' || comment.original_line === null) return;
-        const threadKey = `${comment.path}:${comment.original_line}`;
-        if (!threads[threadKey]) {
-          threads[threadKey] = [];
-        }
-        threads[threadKey].push(comment);
-      });
-
-      for (const threadKey in threads) {
-        const commentsInThread = threads[threadKey].sort(
-          (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
-        );
-        if (commentsInThread.length > 0) {
-          const firstComment = commentsInThread[0];
-          const threadBody = commentsInThread
-            .map(c => `> _@${c.user?.login || "unknown"} · ${new Date(c.created_at).toLocaleDateString("en-CA", { year: "numeric", month: "short", day: "numeric" })}_\n\n${c.body_text || c.body || ""}`)
-            .join("\n\n---\n");
-
-          results.push({
-            id: `thread-${firstComment.path}-${firstComment.original_line}-${firstComment.id}`,
-            kind: "comment",
-            header: `### THREAD ON ${firstComment.path}:${firstComment.original_line}`,
-            commentBody: threadBody,
-            author: firstComment.user?.login || "unknown",
-            authorAvatarUrl: firstComment.user?.avatar_url,
-            timestamp: firstComment.created_at,
-            filePath: firstComment.path,
-            line: firstComment.original_line,
-          });
-        }
       }
-    } catch (error) {
-      console.error("Failed to fetch review comments (threads):", error);
-    }
-    
-    results.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+    );
 
-    return results;
+    // Fetch pull request reviews
+    const reviews = await octokit.paginate(
+      octokit.rest.pulls.listReviews,
+      {
+        owner,
+        repo,
+        pull_number: number,
+        per_page: 100,
+      }
+    );
+
+    // Fetch pull request review comments
+    const reviewComments = await octokit.paginate(
+      octokit.rest.pulls.listReviewComments,
+      {
+        owner,
+        repo,
+        pull_number: number,
+        per_page: 100,
+      }
+    );
+
+    // Normalize all comments into CommentBlockInput[]
+    const commentBlocks: CommentBlockInput[] = [];
+
+    // Issue comments
+    for (const c of issueComments) {
+      commentBlocks.push({
+        id: c.id.toString(),
+        author: {
+          id: c.user?.node_id ?? "",
+          name: c.user?.login ?? "",
+          avatarUrl: c.user?.avatar_url ?? "",
+          bot: !!c.user?.type && c.user.type === "Bot",
+        },
+        createdAt: c.created_at,
+        body: c.body ?? "",
+        url: c.html_url,
+        type: "ISSUE_COMMENT",
+      });
+    }
+
+    // Review comments (top-level)
+    for (const rc of reviewComments) {
+      commentBlocks.push({
+        id: rc.id.toString(),
+        author: {
+          id: rc.user?.node_id ?? "",
+          name: rc.user?.login ?? "",
+          avatarUrl: rc.user?.avatar_url ?? "",
+          bot: !!rc.user?.type && rc.user.type === "Bot",
+        },
+        createdAt: rc.created_at,
+        body: rc.body ?? "",
+        url: rc.html_url,
+        type: "REVIEW_COMMENT",
+      });
+    }
+
+    // Reviews (summary, not inline comments)
+    for (const r of reviews) {
+      if (r.body) {
+        commentBlocks.push({
+          id: r.id.toString(),
+          author: {
+            id: r.user?.node_id ?? "",
+            name: r.user?.login ?? "",
+            avatarUrl: r.user?.avatar_url ?? "",
+            bot: !!r.user?.type && r.user.type === "Bot",
+          },
+          createdAt: r.submitted_at ?? r.submitted_at ?? r.commit_id ?? "",
+          body: r.body,
+          url: r.html_url,
+          type: "REVIEW",
+        });
+      }
+    }
+
+    // Sort by createdAt ascending
+    commentBlocks.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+
+    return commentBlocks;
   }
 
-  private makePull(prNode: PullNode): PullProps {
+  private makePull(prNode: PullRequestNode): PullProps {
     const discussions: Discussion[] = [];
     const participants: Participant[] = [];
 
-    for (const node of prNode.comments?.nodes ?? []) {
-      if (!node) continue;
-      this.addOrUpdateParticipant(participants, node.author, node.createdAt);
-      discussions.push({
-        id: node.id,
-        author: this.makeUser(node.author),
-        createdAt: this.toDate(node.createdAt),
-        body: node.bodyText,
-        isResolved: node.isResolved ?? false,
-        url: node.url,
-      });
+    // Use hasComments guard for safe access to comments
+    if (hasComments(prNode) && prNode.comments?.nodes) {
+      for (const node of prNode.comments.nodes) {
+        if (!node) continue;
+        this.addOrUpdateParticipant(participants, node.author, node.createdAt);
+        discussions.push({
+          id: node.id,
+          author: this.makeUser(node.author),
+          createdAt: this.toDate(node.createdAt),
+          body: node.bodyText,
+          isResolved: node.isResolved ?? false,
+          url: node.url,
+        });
+      }
     }
 
-    if (hasLatestOpinionatedReviews(prNode)) {
-      for (const node of prNode.latestOpinionatedReviews.nodes ?? []) {
+    // Use hasLatestOpinionatedReviews guard for reviews
+    if (hasLatestOpinionatedReviews(prNode) && prNode.latestOpinionatedReviews?.nodes) {
+      for (const node of prNode.latestOpinionatedReviews.nodes) {
         if (!node) continue;
         // Use submittedAt if available, otherwise createdAt for participant activity
         this.addOrUpdateParticipant(participants, node.author, node.submittedAt ?? node.createdAt);
       }
     }
 
-    if (hasMergeQueueEntry(prNode)) {
+    // Use hasMergeQueueEntry guard for merge queue participants
+    if (guardHasMergeQueueEntry(prNode)) {
       const mergeQueueEntry = prNode.mergeQueueEntry;
       if (mergeQueueEntry?.commit?.author) {
         this.addOrUpdateParticipant(
@@ -319,51 +310,57 @@ export class DefaultGitHubClient implements GitHubClient {
         );
       }
     }
-    
-    const mqState = prNode.mergeQueueEntry?.state;
+
+    const mqState = guardHasMergeQueueEntry(prNode) ? prNode.mergeQueueEntry?.state : undefined;
 
     return {
       id: prNode.id,
       repo: `${prNode.repository.owner.login}/${prNode.repository.name}`,
       number: prNode.number,
       title: prNode.title,
-      body: prNode.bodyHTML || prNode.bodyText || prNode.body,
+      body: prNode.bodyHTML || prNode.bodyText || prNode.body || "",
       state: this.toPullState(prNode),
       checkState: this.toCheckStateFromRollup(prNode.statusCheckRollup),
       queueState:
-        hasMergeQueueEntry(prNode) && mqState === "MERGEABLE"
+        guardHasMergeQueueEntry(prNode) && mqState === "MERGEABLE"
           ? "mergeable"
-          : hasMergeQueueEntry(prNode) && mqState === "UNMERGEABLE"
+          : guardHasMergeQueueEntry(prNode) && mqState === "UNMERGEABLE"
             ? "unmergeable"
             : "pending",
       createdAt: this.toDate(prNode.createdAt),
       updatedAt: this.toDate(prNode.updatedAt),
-      enqueuedAt: hasMergeQueueEntry(prNode) ? this.toDate(prNode.mergeQueueEntry.enqueuedAt) : undefined,
+      enqueuedAt: guardHasMergeQueueEntry(prNode) ? this.toDate(prNode.mergeQueueEntry?.enqueuedAt) : undefined,
       mergedAt: this.toDate(prNode.mergedAt),
       closedAt: this.toDate(prNode.closedAt),
       locked: prNode.locked ?? false,
       url: prNode.url,
       labels:
         prNode.labels?.nodes
-          ?.filter(isNonNull)
+          ?.filter((n: { name?: string } | null): n is { name: string } => isNonNull(n))
           .map((n: { name: string }) => n.name) ?? [],
       additions: prNode.additions ?? 0,
       deletions: prNode.deletions ?? 0,
       author: this.makeUser(prNode.author),
-      requestedReviewers: prNode.reviewRequests?.nodes?.map((req: any) => this.makeUser(req.requestedReviewer)).filter(isNonNull) ?? [],
-      requestedTeams: prNode.reviewRequests?.nodes?.map((req: any) => this.makeTeam(req.requestedReviewer)).filter(isNonNull) ?? [],
-      reviews: hasLatestOpinionatedReviews(prNode)
+      requestedReviewers: prNode.reviewRequests?.nodes?.map(
+        (req: { requestedReviewer: Actor | null } | null) =>
+          req ? this.makeUser(req.requestedReviewer) : null
+      ).filter((u: User | null): u is User => isNonNull(u)) ?? [],
+      requestedTeams: prNode.reviewRequests?.nodes?.map(
+        (req: { requestedReviewer: Actor | null } | null) =>
+          req ? this.makeTeam(req.requestedReviewer) : null
+      ).filter((t: Team | null): t is Team => isNonNull(t)) ?? [],
+      reviews: hasLatestOpinionatedReviews(prNode) && prNode.latestOpinionatedReviews?.nodes
         ? (() => {
             const reviews = prNode.latestOpinionatedReviews.nodes?.filter(
-              isNonNull,
+              (n: any): n is typeof n => isNonNull(n)
             );
             return (
               reviews
                 ?.filter(
-                  (n: any) =>
-                    n.state !== PullRequestReviewState.Pending,
+                  (n: { state: PullRequestReviewState }) =>
+                    n.state !== PullRequestReviewState.Pending
                 )
-                .map((n: any) => ({
+                .map((n: { author: Actor; authorCanPushToRepository: boolean; state: PullRequestReviewState }) => ({
                   author: this.makeUser(n.author),
                   collaborator: n.authorCanPushToRepository,
                   approved: n.state === PullRequestReviewState.Approved,
@@ -371,24 +368,22 @@ export class DefaultGitHubClient implements GitHubClient {
             );
           })()
         : [],
-      checks: hasStatusCheckRollup(prNode)
+      checks: hasStatusCheckRollup(prNode) && prNode.statusCheckRollup?.contexts?.nodes
         ? (() => {
-            const rawContexts: unknown[] =
-              prNode.statusCheckRollup?.contexts?.nodes ?? [];
-
-            const nodes = rawContexts
-              .filter(isNonNullish)
-              .map((c) => c as CheckRun | StatusContext);
-
-            return nodes.map((c) => this.makeCheck(c));
+            const nodes = (prNode.statusCheckRollup.contexts.nodes ?? [])
+              .filter((c: CheckRun | StatusContext | null | undefined): c is CheckRun | StatusContext => isNonNullish(c))
+              .map((c: CheckRun | StatusContext) => c);
+            return nodes.map((c: CheckRun | StatusContext) => this.makeCheck(c));
           })()
         : [],
       discussions,
       branch: prNode.headRefName ?? "",
       files:
-        prNode.files?.nodes
-          ?.filter(isNonNullish)
-          .map((f: { path: string }) => f.path) ?? [],
+        hasFiles(prNode) && prNode.files?.nodes
+          ? prNode.files.nodes.filter(
+              (f: { path?: string } | null | undefined): f is { path: string } => isNonNullish(f)
+            ).map((f: { path: string }) => f.path)
+          : [],
       participants,
     };
   }
@@ -423,7 +418,7 @@ export class DefaultGitHubClient implements GitHubClient {
     return null;
   }
 
-  private toPullState(prNode: PullNode): PullProps["state"] {
+  private toPullState(prNode: PullRequestNode): PullProps["state"] {
     if (prNode.isDraft) return "draft";
     if (prNode.merged) return "merged";
     if (prNode.closed) return "closed";
@@ -432,7 +427,7 @@ export class DefaultGitHubClient implements GitHubClient {
     return "pending";
   }
 
-  private toCheckStateFromRollup(rollup: PullNode["statusCheckRollup"]): CheckState {
+  private toCheckStateFromRollup(rollup: PullRequestNode["statusCheckRollup"]): CheckState {
     if (!rollup || !rollup.state) return "pending";
     switch (rollup.state) {
       case StatusState.Success: return "success";

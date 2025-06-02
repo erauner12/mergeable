@@ -13,9 +13,9 @@ const SIMPLE_DIFF = `${SIMPLE_DIFF_CONTENT}\n`; // Ensure trailing newline for c
 
 const BINARY_DIFF_CONTENT = `diff --git a/img.png b/img.png
 index 0000000..2222222 100644
-Binary files a/img.png and b/img.png differ
-`;
-const BINARY_DIFF = `${BINARY_DIFF_CONTENT}\n`;
+Binary files a/img.png and b/img.png differ`; // Removed explicit \n here, will add to BINARY_DIFF
+
+const BINARY_DIFF = `${BINARY_DIFF_CONTENT}\n`; // Add newline here for consistency with SIMPLE_DIFF
 
 const MULTI_FILE_DIFF = `${SIMPLE_DIFF}${BINARY_DIFF}`;
 

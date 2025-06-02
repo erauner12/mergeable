@@ -56,7 +56,7 @@ test("confirm button calls onConfirm with selected files", () => {
   const imageCheckbox = screen.getByLabelText(/^image\.png/);
   fireEvent.click(imageCheckbox);
   
-  const confirmButton = screen.getByText(/^Copy 2 files$/); // zebra.js, banana.md remain
+  const confirmButton = screen.getByRole('button', { name: /^Copy 2 files$/ }); // zebra.js, banana.md remain
   fireEvent.click(confirmButton);
 
   const expectedSelected = new Set(["zebra.js", "banana.md"]);
@@ -92,21 +92,21 @@ test("select all / select none buttons work", () => {
 
   let checkboxes = screen.getAllByRole("checkbox");
   checkboxes.forEach(cb => expect(cb).not.toBeChecked());
-  expect(screen.getByText(/^Copy 0 files$/)).toBeDisabled();
+  expect(screen.getByRole('button', { name: /^Copy 0 files$/ })).toBeDisabled();
 
 
   fireEvent.click(screen.getByText("Select all"));
   checkboxes.forEach(cb => expect(cb).toBeChecked());
-  expect(screen.getByText(/^Copy 4 files$/)).not.toBeDisabled();
+  expect(screen.getByRole('button', { name: /^Copy 4 files$/ })).not.toBeDisabled();
   
   fireEvent.click(screen.getByText("Select none"));
   checkboxes.forEach(cb => expect(cb).not.toBeChecked());
-  expect(screen.getByText(/^Copy 0 files$/)).toBeDisabled();
+  expect(screen.getByRole('button', { name: /^Copy 0 files$/ })).toBeDisabled();
 
   // Check one manually
   fireEvent.click(checkboxes[0]); // apple.ts
-  expect(screen.getByText(/^Copy 1 file$/)).not.toBeDisabled();
-  fireEvent.click(screen.getByText(/^Copy 1 file$/));
+  expect(screen.getByRole('button', { name: /^Copy 1 file$/ })).not.toBeDisabled();
+  fireEvent.click(screen.getByRole('button', { name: /^Copy 1 file$/ }));
   
   expect(mockOnConfirm).toHaveBeenCalledWith(new Set([MOCK_FILES_SORTED_PATHS[0]]));
 });
@@ -133,7 +133,7 @@ test("displays correct pluralization for 'Copy N file(s)' button", () => {
       onCancel={() => {}}
     />
   );
-  expect(screen.getByText("Copy 1 file")).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: "Copy 1 file" })).toBeInTheDocument();
 
   render(
     <FileDiffPicker
@@ -144,7 +144,7 @@ test("displays correct pluralization for 'Copy N file(s)' button", () => {
       onCancel={() => {}}
     />
   );
-  expect(screen.getByText("Copy 2 files")).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: "Copy 2 files" })).toBeInTheDocument();
   
   render(
     <FileDiffPicker
@@ -155,5 +155,5 @@ test("displays correct pluralization for 'Copy N file(s)' button", () => {
       onCancel={() => {}}
     />
   );
-  expect(screen.getByText("Copy 0 files")).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: "Copy 0 files" })).toBeInTheDocument();
 });

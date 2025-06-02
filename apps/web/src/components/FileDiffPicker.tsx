@@ -63,7 +63,7 @@ export function FileDiffPicker({
   function getFileLabelHint(meta: PatchFileMetadata): string {
     const hints: string[] = [];
     if (meta.isBinary) {
-      return "(binary)"; // Binary is an exclusive hint
+      return " (binary)"; // Added leading space
     }
   
     const linesOverThreshold = meta.lineCount > 400;

@@ -9,6 +9,7 @@ import {
   SearchDocument,
   SearchFullDocument,
   StatusState,
+  type Actor, // Added Actor type import
   type CheckRun,
   type SearchFullQuery,
   type SearchQuery,
@@ -24,6 +25,7 @@ import type {
   Check,
   CheckState,
   Discussion,
+  Endpoint, // Added Endpoint type import
   Participant,
   Profile,
   PullProps,
@@ -36,6 +38,32 @@ import type { CommentBlockInput } from "../repoprompt"; // Import CommentBlockIn
 type IssueComment = Endpoints["GET /repos/{owner}/{repo}/issues/{issue_number}/comments"]["response"]["data"][number];
 type PullReview = Endpoints["GET /repos/{owner}/{repo}/pulls/{pull_number}/reviews"]["response"]["data"][number];
 type PullReviewComment = Endpoints["GET /repos/{owner}/{repo}/pulls/{pull_number}/comments"]["response"]["data"][number];
+
+// single commit item returned by pulls.listCommits
+export type PullRequestCommit = Endpoints["GET /repos/{owner}/{repo}/pulls/{pull_number}/commits"]["response"]["data"][number];
+
+const MyOctokit = Octokit.plugin(throttling);
+
+export type Endpoint = {
+  auth: string;
+  baseUrl: string;
+};
+
+export interface GitHubClient {
+  getViewer(endpoint: Endpoint): Promise<Profile>;
+  searchPulls(
+    endpoint: Endpoint,
+    search: string,
+    orgs: string[],
+    limit: number,
+  ): Promise<PullProps[]>;
+  fetchPullComments(
+    endpoint: Endpoint,
+    owner: string,
+    repo: string,
+    number: number,
+  ): Promise<CommentBlockInput[]>;
+}
 
 /** Narrow Octokit response when `mediaType.format === 'diff'` */
 type DiffStringResponse = { data: string };
@@ -66,8 +94,11 @@ export async function getPullRequestDiff(
   return data; // `data` is already the diff string
 }
 
+export type { Endpoint }; // Re-export Endpoint
+
 export class DefaultGitHubClient implements GitHubClient {
   private octokits: Record<string, Octokit> = {};
+  private commentCache: Map<string, Promise<CommentBlockInput[]>> = new Map(); // Add commentCache definition
 
   async getViewer(endpoint: Endpoint): Promise<Profile> {
     const octokit = this.getOctokit(endpoint);
@@ -244,9 +275,74 @@ export class DefaultGitHubClient implements GitHubClient {
 
     return results;
   }
+
+  private makePull(prNode: any): PullProps {
+    const discussions: Discussion[] = [];
+    const participants: Participant[] = [];
+
+    for (const node of prNode.comments?.nodes ?? []) {
+      if (!node) continue;
+      this.addOrUpdateParticipant(participants, node.author, node.createdAt);
+      discussions.push({
+        id: node.id,
+        author: this.makeUser(node.author),
+        createdAt: this.toDate(node.createdAt),
+        body: node.bodyText,
+        isResolved: node.isResolved ?? false,
+        url: node.url,
+        // TODO: reactions
+      });
+    }
+
+    if (hasLatestOpinionatedReviews(prNode)) {
+      for (const node of prNode.latestOpinionatedReviews.nodes ?? []) {
+        if (!node) continue;
+        this.addOrUpdateParticipant(participants, node.author, node.createdAt);
+      }
+    }
+
+    if (hasMergeQueueEntry(prNode)) {
+      const mergeQueueEntry = prNode.mergeQueueEntry;
+      if (mergeQueueEntry?.commit?.author) {
+        this.addOrUpdateParticipant(
+          participants,
+          mergeQueueEntry.commit.author,
+          mergeQueueEntry.createdAt,
+        );
+      }
+    }
+
+    return {
+      id: prNode.id,
+      title: prNode.title,
+      number: prNode.number,
+      createdAt: this.toDate(prNode.createdAt),
+      updatedAt: this.toDate(prNode.updatedAt),
+      url: prNode.url,
+      author: this.makeUser(prNode.author),
+      participants,
+      labels:
+        prNode.labels?.nodes
+          ?.filter(isNonNull)
+          .map((n) => n.name) ?? [],
+      draft: prNode.isDraft,
+      mergeable: prNode.mergeable === "MERGEABLE",
+      totalComments: prNode.comments?.totalCount ?? 0,
+      reviewDecision: prNode.reviewDecision ?? null,
+      approved: prNode.reviewDecision === PullRequestReviewDecision.Approved,
+      // TODO: what do we do if there are no reviews?
+      reviews: hasLatestOpinionatedReviews(prNode)
+        ? (() => {
+            const reviews = prNode.latestOpinionatedReviews.nodes?.filter(
+              isNonNull,
+            );
+            return (
+              reviews
+                ?.filter(
+                  (n: any) =>
                     n.state !== PullRequestReviewState.Pending,
                 )
-                .map((n: Latest) => ({
+                .map((n: any) => ({
                   author: this.makeUser(n.author),
                   collaborator: n.authorCanPushToRepository,
                   approved: n.state === PullRequestReviewState.Approved,
@@ -367,6 +463,9 @@ export class DefaultGitHubClient implements GitHubClient {
     }
   }
 }
+
+export const gitHubClient = new DefaultGitHubClient();
+export const fetchPullComments = gitHubClient.fetchPullComments.bind(gitHubClient);
 
 export async function getPullRequestMeta(
   owner: string,

@@ -201,8 +201,8 @@ export async function buildRepoPromptText(
     kind: "comment",
     header: `### PR #${pull.number} DETAILS: ${pull.title}`,
     commentBody: pull.body?.trim() || "_No description provided._",
-    author: pull.author.name,
-    authorAvatarUrl: pull.author.avatarUrl,
+    author: pull.author?.name ?? "unknown",
+    authorAvatarUrl: pull.author?.avatarUrl,
     timestamp: pull.createdAt,
   };
   allPromptBlocks.push(prDetailsBlock);
@@ -268,7 +268,6 @@ export async function buildRepoPromptText(
       }
     } else {
       console.warn(`PR #${pull.number} has no commits for 'last commit' diff.`);
-      }
     }
   }
 
@@ -330,7 +329,7 @@ export async function buildRepoPromptText(
     ? pull.url
     : `https://github.com/${owner}/${repo}/pull/${pull.number}`;
   promptPayloadParts.push(`🔗 ${prLink}`);
-  const promptTextForInitialSelection = promptPayloadParts.join("\n");
+  const promptText = promptPayloadParts.join("\n");
 
-  return { promptText: promptTextForInitialSelection, blocks: allPromptBlocks };
+  return { promptText, blocks: allPromptBlocks };
 }

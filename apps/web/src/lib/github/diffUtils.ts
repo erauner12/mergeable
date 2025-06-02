@@ -1,4 +1,6 @@
 export interface PatchFileMetadata {
+  /** Path in the repo (full "b/" side of `diff --git`) */
+  path: string;
   patch: string;
   lineCount: number; // Sum of added and deleted lines
   byteCount: number; // Total bytes of the patch string
@@ -37,6 +39,7 @@ export function splitUnifiedDiff(unifiedDiff: string): Record<string, PatchFileM
       }
 
       map[currentFilePath] = {
+        path: currentFilePath, // Populate the path property
         patch: patchString,
         lineCount,
         byteCount,

@@ -1,14 +1,13 @@
 import {
   Button,
   Checkbox,
-  Classes,
   Dialog,
   DialogBody,
   DialogFooter,
   FormGroup,
   Intent,
 } from "@blueprintjs/core";
-import React, { useMemo } from "react";
+import { useMemo } from "react";
 import { useDiffSelection } from "../hooks/useDiffSelection";
 import type { PatchFileMetadata } from "../lib/github/diffUtils"; // Import the interface
 

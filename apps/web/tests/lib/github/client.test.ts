@@ -190,6 +190,7 @@ test("fetchPullComments should set 'resolved' flag correctly for comment threads
   // Verify that the main thread block contains two formatted comments
   expect(countComments(mainThreadBlock!.commentBody)).toBe(2);
   expect(mainThreadBlock?.resolved).toBe(true); // This thread should be resolved (based on last comment 202)
+  expect(mainThreadBlock?.threadId).toBe(String(commentIdMainThreadUnresolvedPart)); // Explicitly check threadId is "101"
 
   expect(secondThreadBlock).toBeDefined();
   expect(secondThreadBlock?.resolved).toBe(false); // This thread should be unresolved

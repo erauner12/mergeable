@@ -1,15 +1,53 @@
-import { getPullRequestDiff, getPullRequestMeta } from "./github/client";
+import type { Endpoint } from "./github/client"; // Import Endpoint type
+import {
+  getCommitDiff,
+  getPullRequestDiff,
+  getPullRequestMeta,
+  listPrCommits,
+} from "./github/client";
 import type { Pull } from "./github/types";
 import { getBasePrompt, getDefaultRoot } from "./settings";
 
+/**
+ * Functions for building RepoPrompt URLs and prompt text.
+ * Note on URL parameters:
+ * - File paths in the 'files' query parameter are individually UTF-8 percent-encoded.
+ * - When reading these parameters back using `URLSearchParams.get()`, the browser automatically decodes them.
+ */
+
 export type LaunchMode = "workspace" | "folder";
+
+export interface DiffOptions {
+  includePr?: boolean;
+  includeLastCommit?: boolean;
+  /** @internal Currently unused by the UI – always passed as `[]` from DiffPickerDialog. Kept for API compatibility. */
+  commits?: string[]; // Array of commit SHAs
+}
+
+export interface DiffBlockInput {
+  header: string;
+  patch: string;
+}
+
+/**
+ * Resolved metadata about a pull request, typically derived by `buildRepoPromptUrl`.
+ * All properties (`owner`, `repo`, `branch`, `files`) are expected to be non-empty
+ * and validated by the producer (e.g., `buildRepoPromptUrl` fetches them if initially missing).
+ */
+export interface ResolvedPullMeta {
+  owner: string;
+  repo: string;
+  branch: string;
+  files: string[];
+  rootPath: string;
+}
 
 /** Helper to keep test output clean */
 const isTestEnv = () =>
   typeof process !== "undefined" && process.env.NODE_ENV === "test";
 
 /** Pretty-print the parameters we’re about to hand to RepoPrompt */
-function logRepoPromptCall(details: {
+export function logRepoPromptCall(details: {
   rootPath: string;
   workspace: string;
   branch: string;
@@ -17,8 +55,6 @@ function logRepoPromptCall(details: {
   flags: Record<string, boolean | undefined>;
   promptPreview: string;
 }) {
-  // Print as a single object so it’s collapsible in DevTools
-  // (skip when running Vitest to avoid noisy snapshots)
   if (!isTestEnv()) {
     // eslint-disable-next-line no-console
     console.info("[RepoPrompt] Launch parameters:", details);
@@ -28,132 +64,204 @@ function logRepoPromptCall(details: {
 /** The PR object we need here must expose the head-branch name. */
 type PullWithBranch = Pull & { branch: string };
 
-// Assuming 'Pull' type and 'getDefaultRoot' are defined or imported
-// export interface Pull { ... }
-// export async function getDefaultRoot(): Promise<string> { ... }
+function formatDiffBlocksForPrompt(diffBlocks: DiffBlockInput[]): string {
+  if (diffBlocks.length === 0) {
+    return "";
+  }
+  return diffBlocks
+    .map(
+      (block) =>
+        // keep the patch exactly as GitHub returned it
+        `${block.header}\n\`\`\`diff\n${block.patch}\n\`\`\`\n`,
+    )
+    .join("\n")
+    .trimEnd();
+}
 
-export async function buildRepoPromptLink(
+/**
+ * Builds a RepoPrompt URL for a given pull request and launch mode.
+ * This function no longer includes the prompt in the URL.
+ * @param pull The pull request object.
+ * @param launchMode The mode to launch RepoPrompt in ('workspace' or 'folder').
+ * @param endpoint Optional endpoint configuration for authenticated requests.
+ * @returns An object containing the final URL and resolved metadata.
+ */
+export async function buildRepoPromptUrl(
   pull: PullWithBranch,
-  mode: LaunchMode = "workspace", // 👈 default keeps current behaviour
-): Promise<string> {
+  launchMode: LaunchMode = "workspace",
+  endpoint?: Endpoint,
+): Promise<{ url: string; resolvedMeta: ResolvedPullMeta }> {
   const baseRoot = await getDefaultRoot();
-  // getDefaultRoot() is typed to return a string; keep a runtime guard
-  // but avoid template–literal interpolation to placate the linter.
   if (typeof baseRoot !== "string") {
     throw new Error("getDefaultRoot did not return a string value");
   }
-  const [owner, repo] = pull.repo.split("/");
+  const [owner, repo] = pull.repo.split("/") as [string, string];
   const rootPath = `${baseRoot}/${repo}`;
 
-  // Ensure branch and files are populated
-  let { branch, files } = pull; // Use local vars that might be updated
+  let { branch, files } = pull;
+  const token = endpoint?.auth;
 
   if (!branch || files.length === 0) {
-    // Fetch metadata if branch is empty or files list is empty
-    const meta = await getPullRequestMeta(
+    const metaFromGithub = await getPullRequestMeta(
+      // Renamed to avoid conflict with 'meta' parameter in buildRepoPromptText
       owner,
       repo,
-      pull.number /*, token? */,
+      pull.number,
+      token,
     );
-    branch = branch || meta.branch; // If original branch was empty, use fetched.
-    files = files.length ? files : meta.files; // If original files was empty, use fetched.
+    branch = branch || metaFromGithub.branch;
+    files = files.length ? files : metaFromGithub.files;
   }
 
-  // ①  Fetch diff (may be large)
-  let diff = await getPullRequestDiff(
-    owner,
-    repo,
-    pull.number /*, pull.token_if_available */,
-  ); // Consider passing token if available
-  const DIFF_LIMIT = 8000; // keep URL safe
-  if (diff.length > DIFF_LIMIT) {
-    diff =
-      diff.slice(0, DIFF_LIMIT) +
-      "\n… (truncated, open PR in browser for full patch)";
+  const filesParamValue = files.map((f) => encodeURIComponent(f)).join(",");
+
+  const query: string[] = ["focus=true"];
+  let base: string;
+
+  if (launchMode === "workspace") {
+    base = "repoprompt://open";
+    query.push(`workspace=${encodeURIComponent(repo)}`);
+  } else {
+    //  mode === "folder"
+    base = `repoprompt://open/${encodeURIComponent(rootPath)}`;
+    query.push("ephemeral=true");
   }
 
-  // ②  Base prompt template
+  if (files.length > 0) {
+    query.push(`files=${filesParamValue}`);
+  }
+
+  query.sort();
+  const finalUrl = `${base}?${query.join("&")}`;
+
+  return {
+    url: finalUrl,
+    resolvedMeta: { owner, repo, branch, files, rootPath },
+  };
+}
+
+/**
+ * Builds the prompt text and structured diff blocks for a pull request.
+ * @param pull The pull request object.
+ * @param diffOptions Options for including different types of diffs.
+ * @param endpoint Optional endpoint configuration for authenticated requests.
+ * @param meta Resolved metadata (owner, repo, branch, rootPath) from buildRepoPromptUrl.
+ * @returns An object containing the full prompt text and an array of diff blocks.
+ */
+export async function buildRepoPromptText(
+  pull: PullWithBranch,
+  diffOptions: DiffOptions = {},
+  endpoint: Endpoint | undefined,
+  meta: ResolvedPullMeta, // This 'meta' is from buildRepoPromptUrl's return
+): Promise<{ promptText: string; blocks: DiffBlockInput[] }> {
+  const { owner, repo, branch, rootPath } = meta; // Use destructured values from the 'meta' param
+  const token = endpoint?.auth;
+
+  const allDiffBlocks: DiffBlockInput[] = [];
+
+  // 1. Full PR Diff
+  if (diffOptions.includePr) {
+    const prDiff = await getPullRequestDiff(owner, repo, pull.number, token);
+    if (prDiff.trim()) {
+      allDiffBlocks.push({
+        header: "### FULL PR DIFF",
+        patch: prDiff,
+      });
+    }
+  }
+
+  // 2. Last Commit Diff
+  if (diffOptions.includeLastCommit) {
+    const prCommits = await listPrCommits(owner, repo, pull.number, 1, token);
+    if (prCommits.length > 0) {
+      const lastCommit = prCommits[0];
+      if (lastCommit && lastCommit.sha) {
+        const lastCommitDiff = await getCommitDiff(
+          owner,
+          repo,
+          lastCommit.sha,
+          token,
+        );
+        if (lastCommitDiff.trim()) {
+          const shortSha = lastCommit.sha.slice(0, 7);
+          const commitTitle = (
+            lastCommit.commit.message || "No commit message"
+          ).split("\n")[0];
+          allDiffBlocks.push({
+            header: `### LAST COMMIT (${shortSha} — "${commitTitle}")`,
+            patch: lastCommitDiff,
+          });
+        }
+      } else {
+        console.warn(
+          `Could not get SHA for the last commit of PR #${pull.number}`,
+        );
+      }
+    } else {
+      console.warn(`PR #${pull.number} has no commits for 'last commit' diff.`);
+    }
+  }
+
+  // 3. Specific Commits Diffs
+  if (diffOptions.commits && diffOptions.commits.length > 0) {
+    const allPrCommitsForMessages = await listPrCommits(
+      owner,
+      repo,
+      pull.number,
+      250, // Default limit for fetching commit messages
+      token,
+    );
+    const commitMessageMap = new Map(
+      allPrCommitsForMessages.map((c) => [
+        c.sha,
+        (c.commit.message || "No commit message").split("\n")[0],
+      ]),
+    );
+
+    for (const sha of diffOptions.commits) {
+      const commitDiff = await getCommitDiff(owner, repo, sha, token);
+      if (commitDiff.trim()) {
+        const shortSha = sha.slice(0, 7);
+        const commitTitle =
+          commitMessageMap.get(sha) || "Unknown commit message";
+        allDiffBlocks.push({
+          header: `### COMMIT (${shortSha} — "${commitTitle}")`,
+          patch: commitDiff,
+        });
+      }
+    }
+  }
+
+  const combinedDiffContent = formatDiffBlocksForPrompt(allDiffBlocks);
+
   const basePrompt = await getBasePrompt();
-
-  // ③  Final prompt text
-  const promptPayload = [
+  const promptPayloadParts: string[] = [
     "## SETUP",
     "```bash",
-    `cd ${rootPath}`,
+    `cd ${rootPath}`, // Correctly from meta
     "git fetch origin",
-    `git checkout ${branch}`, // Use local 'branch' variable
+    `git checkout ${branch}`, // Correctly from meta
     "```",
     "",
     basePrompt,
     "",
+    // Corrected lines: use 'pull' for PR-specific details
     `### PR #${pull.number}: ${pull.title}`,
     "",
     pull.body ?? "",
     "",
-    "### FULL DIFF",
-    "```diff",
-    diff.trimEnd(),
-    "```",
-    "",
-    `🔗 ${pull.url}`,
-  ].join("\n");
+  ];
 
-  const prompt = encodeURIComponent(promptPayload);
-
-  // Encode **each** file but keep the commas intact (mirrors CLI behaviour)
-  const filesParamValue = files // Use local 'files' variable
-    .map((f) => encodeURIComponent(f))
-    .join(",");
-  // const workspaceParam = `workspace=${encodeURIComponent(repo)}`; // Removed, handled by mode
-
-  // When we set workspace=…, drop the path component from the URL base.
-  // RepoPrompt uses the workspace param to identify the window/project.
-  // const base = "repoprompt://open"; // Removed, handled by mode
-
-  // const queryParamsArray: string[] = []; // Renamed to query
-  // queryParamsArray.push(workspaceParam);
-  // queryParamsArray.push("focus=true");
-
-  // ──────────────────────────────────────────────────────────────
-  // 5️⃣  Build query & base URL according to requested mode
-  // ──────────────────────────────────────────────────────────────
-  const query: string[] = ["focus=true"]; // common flag
-  let base: string; // <—— was const
-
-  if (mode === "workspace") {
-    base = "repoprompt://open";
-    query.push(`workspace=${encodeURIComponent(repo)}`);
-    query.push("ephemeral=false"); // explicit – avoid surprises
-  } else {
-    //  mode === "folder"
-    base = `repoprompt://open/${encodeURIComponent(rootPath)}`;
-    query.push("ephemeral=true"); // throw-away session
+  if (combinedDiffContent.trim()) {
+    promptPayloadParts.push(combinedDiffContent, "");
   }
 
-  if (files.length > 0) {
-    // Use local 'files' variable
-    query.push(`files=${filesParamValue}`);
-  }
-  // The prompt payload is URI encoded, so `prompt` variable will not be empty if payload is not empty.
-  // However, `encodeURIComponent("")` results in `""`, so an empty promptPayload will result in an empty `prompt`.
-  if (prompt.length) {
-    query.push(`prompt=${prompt}`);
-  }
+  // Ensure the PR link is correctly formatted
+  const prLink = pull.url.includes("/pull/")
+    ? pull.url
+    : `https://github.com/${owner}/${repo}/pull/${pull.number}`;
+  promptPayloadParts.push(`🔗 ${prLink}`);
+  const promptText = promptPayloadParts.join("\n");
 
-  query.sort(); // deterministic ordering
-  const finalUrl = `${base}?${query.join("&")}`;
-
-  logRepoPromptCall({
-    rootPath,
-    workspace: repo,
-    branch: branch, // Use local 'branch' variable
-    files: files, // Use local 'files' variable
-    flags: { focus: true /* future: persist / ephemeral etc. */ },
-    promptPreview:
-      promptPayload.length > 120
-        ? `${promptPayload.slice(0, 120)}…`
-        : promptPayload,
-  });
-
-  return finalUrl;
+  return { promptText, blocks: allDiffBlocks };
 }

@@ -2,12 +2,13 @@ import type { Endpoint, GitHubClient } from "../src/lib/github/client";
 import type { Profile, Pull, PullProps } from "../src/lib/github/types";
 import type { Connection, Section } from "../src/lib/types";
 
-export function mockPull(props?: Omit<Partial<Pull>, "uid" | "url">): Pull {
+export function mockPull(props?: Omit<Partial<Pull>, "uid">): Pull {
   const id = props?.id ?? "PR_1";
   const repo = props?.repo ?? "pvcnt/mergeable";
   const number = props?.number ?? 1;
   const host = props?.host ?? "github.com";
   const connection = props?.connection ?? "1";
+  const finalUrl = props?.url ?? `https://${host}/${repo}/pull/${number}`; // Hoisted and respects override
   return {
     id,
     repo,
@@ -18,7 +19,7 @@ export function mockPull(props?: Omit<Partial<Pull>, "uid" | "url">): Pull {
     checkState: "pending",
     createdAt: "2024-08-05T15:57:00Z",
     updatedAt: "2024-08-05T15:57:00Z",
-    url: `https://${host}/${repo}/${number}`,
+    url: finalUrl, // Use the computed finalUrl
     locked: false,
     additions: 0,
     deletions: 0,
@@ -77,7 +78,14 @@ export class TestGitHubClient implements GitHubClient {
     });
   }
 
-  searchPulls(endpoint: Endpoint, search: string): Promise<PullProps[]> {
+  /* eslint-disable @typescript-eslint/no-unused-vars */
+  searchPulls(
+    endpoint: Endpoint,
+    search: string,
+    _orgs: string[], // prefixed ⇒ "used"
+    _limit: number, // prefixed ⇒ "used"
+  ): Promise<PullProps[]> {
+  /* eslint-enable @typescript-eslint/no-unused-vars */
     const pulls =
       this.pullsBySearch[`${endpoint.baseUrl}:${endpoint.auth}:${search}`] ||
       [];

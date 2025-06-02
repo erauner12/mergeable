@@ -1,245 +1,368 @@
 /// <reference types="vitest/globals" />
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { PullRequestCommit } from "../../src/lib/github/client"; // Import renamed type
 import * as gh from "../../src/lib/github/client"; // ← stub network call
-import { buildRepoPromptLink } from "../../src/lib/repoprompt";
+import {
+  buildRepoPromptText,
+  buildRepoPromptUrl,
+  logRepoPromptCall,
+  type ResolvedPullMeta,
+} from "../../src/lib/repoprompt";
 import * as settings from "../../src/lib/settings";
 // Assuming mockPull is imported from a shared testing utility like "../testing"
 // If it's defined locally, ensure its signature matches the usage.
 import { mockPull } from "../testing";
 
-describe("buildRepoPromptLink", () => {
+// Mock logRepoPromptCall as it's now called by buildRepoPromptText or PullRow
+// For these tests, we are testing buildRepoPromptUrl and buildRepoPromptText,
+// so we don't want their internal/downstream calls to logRepoPromptCall to run.
+// However, the plan is that PullRow calls logRepoPromptCall.
+// For testing buildRepoPromptText, we might want to assert it *doesn't* call logRepoPromptCall.
+// For testing buildRepoPromptUrl, it definitely doesn't call it.
+// Let's mock it here to prevent actual logging during tests.
+vi.mock("../../src/lib/repoprompt", async (importOriginal) => {
+  const original = await importOriginal<typeof import("../../src/lib/repoprompt")>();
+  return {
+    ...original,
+    logRepoPromptCall: vi.fn(),
+  };
+});
+
+
+describe("buildRepoPromptUrl", () => {
   beforeEach(() => {
-    vi.spyOn(gh, "getPullRequestDiff").mockResolvedValue("dummy diff content");
-    // Spy on settings functions for each test, will be restored in afterEach
-    // Mock specific resolved values within each test as needed
-  });
-
-  afterEach(() => {
-    vi.restoreAllMocks();
-  });
-
-  it("should build a valid repoprompt URL with default root", async () => {
-    vi.spyOn(settings, "getDefaultRoot").mockResolvedValue("/tmp");
-    vi.spyOn(settings, "getBasePrompt").mockResolvedValue("TEST_BASE_PROMPT");
-
-    const pull = mockPull({
-      repo: "owner/myrepo",
-      number: 123,
-      title: "My Test PR",
-      body: "This is the body.",
-      branch: "feature-branch",
-      files: ["src/main.ts", "README.md"],
-    });
-
-    const link = await buildRepoPromptLink(pull, "workspace"); // Explicitly pass "workspace"
-
-    expect(settings.getDefaultRoot).toHaveBeenCalled();
-    // Ensure the URL starts with repoprompt://open?workspace=... and does not include the encoded path part
-    // The repo name for "owner/myrepo" is "myrepo"
-    // expect(link.startsWith(`repoprompt://open?workspace=${encodeURIComponent("myrepo")}`)).toBe(true); // Old assertion
-
-    const urlObj = new URL(link);
-    expect(urlObj.protocol).toBe("repoprompt:");
-    expect(urlObj.host).toBe("open");
-    expect(urlObj.pathname).toBe(""); // Workspace mode deliberately omits the path
-
-    const params = urlObj.searchParams;
-    expect(params.get("workspace")).toBe("myrepo");
-    expect(params.get("ephemeral")).toBe("false");
-    expect(params.get("focus")).toBe("true");
-    // files are URI-encoded individually; compare after decoding
-    expect(params.get("files")!.split(",").map(decodeURIComponent)).toEqual([
-      "src/main.ts",
-      "README.md",
-    ]);
-
-    const decodedPrompt = params.get("prompt")!; // Value is already decoded by get()
-    expect(decodedPrompt).toContain("## SETUP");
-    expect(decodedPrompt).toContain("cd /tmp/myrepo");
-    expect(decodedPrompt).toContain("git checkout feature-branch");
-    expect(decodedPrompt).toContain("TEST_BASE_PROMPT");
-    expect(decodedPrompt).toContain("### PR #123: My Test PR");
-    expect(decodedPrompt).toContain("This is the body.");
-    expect(decodedPrompt).toContain("### FULL DIFF");
-    expect(decodedPrompt).toContain("dummy diff content");
-    expect(decodedPrompt.trim().endsWith(`🔗 ${pull.url}`)).toBe(true);
-  });
-
-  it("should handle pull requests with no body", async () => {
-    vi.spyOn(settings, "getDefaultRoot").mockResolvedValue("~/git/work");
-    vi.spyOn(settings, "getBasePrompt").mockResolvedValue(
-      "ANOTHER_BASE_PROMPT",
-    );
-
-    const pull = mockPull({
-      repo: "another/repo",
-      number: 42,
-      title: "Simple PR",
-      body: null, // Test null body
-      branch: "fix-bug",
-      files: ["path/to/file.js"],
-    });
-
-    const link = await buildRepoPromptLink(pull, "workspace"); // Explicitly pass "workspace"
-    // Ensure the URL starts with repoprompt://open?workspace=...
-    // The repo name for "another/repo" is "repo"
-    // expect(link.startsWith(`repoprompt://open?workspace=${encodeURIComponent("repo")}`)).toBe(true); // Old assertion
-
-    const urlObj = new URL(link);
-    expect(urlObj.protocol).toBe("repoprompt:");
-    expect(urlObj.host).toBe("open");
-    expect(urlObj.pathname).toBe(""); // Workspace mode deliberately omits the path
-
-    const params = urlObj.searchParams;
-    expect(params.get("workspace")).toBe("repo");
-    expect(params.get("ephemeral")).toBe("false");
-    expect(params.get("focus")).toBe("true");
-    const decodedPrompt = params.get("prompt") || ""; // Value is already decoded by get()
-
-    // files are URI-encoded individually; compare after decoding
-    expect(params.get("files")!.split(",").map(decodeURIComponent)).toEqual([
-      "path/to/file.js",
-    ]);
-
-    expect(decodedPrompt).toContain("## SETUP");
-    expect(decodedPrompt).toContain("cd ~/git/work/repo");
-    expect(decodedPrompt).toContain("git checkout fix-bug");
-    expect(decodedPrompt).toContain("ANOTHER_BASE_PROMPT");
-    expect(decodedPrompt).toContain("### PR #42: Simple PR");
-    expect(decodedPrompt).not.toContain("null"); // Ensure null body is handled cleanly (empty string)
-    expect(decodedPrompt).toContain("### FULL DIFF");
-    expect(decodedPrompt).toContain("dummy diff content");
-    expect(decodedPrompt.trim().endsWith(`🔗 ${pull.url}`)).toBe(true);
-  });
-
-  it("should handle special characters in paths, titles, and body", async () => {
-    vi.spyOn(settings, "getDefaultRoot").mockResolvedValue("/projects");
-    vi.spyOn(settings, "getBasePrompt").mockResolvedValue(
-      "SPECIAL_BASE_PROMPT",
-    );
-
-    const pull = mockPull({
-      repo: "user/repo-name with spaces",
-      number: 7,
-      title: "PR with !@#$%^&*() characters",
-      body: "Body with `backticks` and other symbols\nNewline here.",
-      branch: "branch/with/slashes",
-      files: ["file with spaces.txt", "another&file.py"],
-    });
-
-    const link = await buildRepoPromptLink(pull, "workspace"); // Explicitly pass "workspace"
-    const rootPath = "/projects/repo-name with spaces";
-    // Ensure the URL starts with repoprompt://open?workspace=...
-    // The repo name for "user/repo-name with spaces" is "repo-name with spaces"
-    // expect(link.startsWith(`repoprompt://open?workspace=${encodeURIComponent("repo-name with spaces")}`)).toBe(true); // Old assertion
-    // The rootPath is still part of the prompt content, e.g. "cd /projects/repo-name with spaces"
-    // expect(link).toContain(`repoprompt://open/${encodeURIComponent(rootPath)}`); // This assertion is no longer valid for the URL structure
-
-    const urlObj = new URL(link);
-    expect(urlObj.protocol).toBe("repoprompt:");
-    expect(urlObj.host).toBe("open");
-    expect(urlObj.pathname).toBe(""); // Workspace mode deliberately omits the path
-
-    const params = urlObj.searchParams;
-    expect(params.get("workspace")).toBe("repo-name with spaces");
-    expect(params.get("ephemeral")).toBe("false");
-    expect(params.get("focus")).toBe("true");
-    // files are URI-encoded individually; compare after decoding
-    expect(params.get("files")!.split(",").map(decodeURIComponent)).toEqual([
-      "file with spaces.txt",
-      "another&file.py",
-    ]);
-
-    const decodedPrompt = params.get("prompt") || ""; // Value is already decoded by get()
-    expect(decodedPrompt).toContain("## SETUP");
-    expect(decodedPrompt).toContain(`cd ${rootPath}`); // rootPath already contains spaces
-    expect(decodedPrompt).toContain("git checkout branch/with/slashes");
-    expect(decodedPrompt).toContain("SPECIAL_BASE_PROMPT");
-    expect(decodedPrompt).toContain("### PR #7: PR with !@#$%^&*() characters");
-    expect(decodedPrompt).toContain(
-      "Body with `backticks` and other symbols\nNewline here.",
-    );
-    expect(decodedPrompt).toContain("### FULL DIFF");
-    expect(decodedPrompt).toContain("dummy diff content");
-    expect(decodedPrompt.trim().endsWith(`🔗 ${pull.url}`)).toBe(true);
-  });
-
-  // ✅ NEW – verifies branch/files are fetched when missing
-  it("fills missing branch & files via getPullRequestMeta()", async () => {
-    // 1️⃣  Fake GitHub REST reply
     vi.spyOn(gh, "getPullRequestMeta").mockResolvedValue({
       branch: "fallback-branch",
       files: ["src/a.ts", "README.md"],
     });
-    // Still stub the diff endpoint
-    // getPullRequestDiff is already spied on in beforeEach, but it's fine to re-spy if needed,
-    // or rely on the beforeEach spy. For clarity, let's assume beforeEach covers it.
-    // If not, it would be: vi.spyOn(gh, "getPullRequestDiff").mockResolvedValue("dummy diff content");
-
     vi.spyOn(settings, "getDefaultRoot").mockResolvedValue("/tmp");
-    vi.spyOn(settings, "getBasePrompt").mockResolvedValue("BASE");
+    // No need to mock diff functions for buildRepoPromptUrl
+  });
 
-    // 2️⃣  Start with NO branch and NO files
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.clearAllMocks(); // Clear all mocks, including logRepoPromptCall
+  });
+
+  it("should build a URL without prompt parameter", async () => {
     const pull = mockPull({
-      repo: "owner/repo",
-      number: 99,
-      title: "Empty meta PR",
-      body: "",
-      branch: "", // intentionally empty
-      files: [], // intentionally empty
+      repo: "owner/myrepo",
+      number: 123,
+      branch: "feature-branch",
+      files: ["src/main.ts", "README.md"],
     });
 
-    const url = await buildRepoPromptLink(pull, "workspace"); // Explicitly pass "workspace"
-
-    // 3️⃣  Expectations --------------------------------------------------------
-    // helper must be called
-    expect(gh.getPullRequestMeta).toHaveBeenCalledWith("owner", "repo", 99);
-
+    const { url } = await buildRepoPromptUrl(pull, "workspace", undefined);
     const urlObj = new URL(url);
     expect(urlObj.protocol).toBe("repoprompt:");
     expect(urlObj.host).toBe("open");
-    expect(urlObj.pathname).toBe(""); // Workspace mode deliberately omits the path
-
-    const params = urlObj.searchParams;
-    expect(params.get("workspace")).toBe("repo");
-    expect(params.get("ephemeral")).toBe("false");
-    expect(params.get("focus")).toBe("true");
-    expect(params.get("files")!.split(",").map(decodeURIComponent)).toEqual([
-      "src/a.ts",
-      "README.md",
-    ]);
-    const prompt = params.get("prompt")!;
-    expect(prompt).toContain("git checkout fallback-branch");
+    expect(urlObj.searchParams.has("prompt")).toBe(false);
+    expect(urlObj.searchParams.get("workspace")).toBe("myrepo");
+    // Updated expectation: URLSearchParams.get() decodes the value.
+    expect(urlObj.searchParams.get("files")).toBe("src/main.ts,README.md");
+    expect(logRepoPromptCall).not.toHaveBeenCalled();
   });
 
-  it("builds folder-mode URL (ephemeral)", async () => {
-    vi.spyOn(settings, "getDefaultRoot").mockResolvedValue("/tmp");
-    vi.spyOn(settings, "getBasePrompt").mockResolvedValue("BASE");
-    // getPullRequestDiff is spied in beforeEach
-    // vi.spyOn(gh, "getPullRequestDiff").mockResolvedValue("diff");
+  it("should resolve metadata and include it in the return", async () => {
     const pull = mockPull({
-      repo: "acme/foo",
-      number: 1,
-      branch: "main",
-      files: ["a.ts"],
+      repo: "owner/anotherrepo",
+      number: 456,
+      branch: "", // To trigger meta fetch
+      files: [], // To trigger meta fetch
+    });
+    vi.spyOn(gh, "getPullRequestMeta").mockResolvedValue({
+      branch: "fetched-branch",
+      files: ["file1.txt", "file2.js"],
     });
 
-    const link = await buildRepoPromptLink(pull, "folder");
+    const { url, resolvedMeta } = await buildRepoPromptUrl(
+      pull,
+      "folder",
+      undefined,
+    );
 
-    const urlObj = new URL(link);
-    expect(urlObj.protocol).toBe("repoprompt:");
-    expect(urlObj.host).toBe("open");
-    expect(urlObj.pathname).toBe("/%2Ftmp%2Ffoo"); // path segment present and encoded
+    expect(gh.getPullRequestMeta).toHaveBeenCalledWith(
+      "owner",
+      "anotherrepo",
+      456,
+      undefined,
+    );
+    expect(resolvedMeta.branch).toBe("fetched-branch");
+    expect(resolvedMeta.files).toEqual(["file1.txt", "file2.js"]);
+    expect(resolvedMeta.owner).toBe("owner");
+    expect(resolvedMeta.repo).toBe("anotherrepo");
+    expect(resolvedMeta.rootPath).toBe("/tmp/anotherrepo");
 
-    const params = urlObj.searchParams;
-    expect(params.get("ephemeral")).toBe("true");
-    expect(params.get("focus")).toBe("true");
-    expect(params.has("workspace")).toBe(false); // no workspace flag
-    expect(params.get("files")!.split(",").map(decodeURIComponent)).toEqual([
-      "a.ts",
-    ]);
-    const prompt = params.get("prompt")!;
-    expect(prompt).toContain("cd /tmp/foo");
-    expect(prompt).toContain("git checkout main");
+    const urlObj = new URL(url);
+    expect(urlObj.pathname).toBe("/%2Ftmp%2Fanotherrepo"); // for folder mode
+    expect(urlObj.searchParams.get("ephemeral")).toBe("true");
+    // Updated expectation: URLSearchParams.get() decodes the value.
+    expect(urlObj.searchParams.get("files")).toBe("file1.txt,file2.js");
   });
 });
+
+describe("buildRepoPromptText", () => {
+  const mockResolvedMeta: ResolvedPullMeta = {
+    owner: "owner",
+    repo: "myrepo",
+    branch: "feature-branch",
+    files: ["src/main.ts", "README.md"],
+    rootPath: "/tmp/myrepo",
+  };
+
+  beforeEach(() => {
+    vi.spyOn(gh, "getPullRequestDiff").mockResolvedValue(
+      "dummy pr diff content",
+    );
+    // getPullRequestMeta is not called by buildRepoPromptText if meta is passed
+    vi.spyOn(gh, "listPrCommits").mockResolvedValue([]);
+    vi.spyOn(gh, "getCommitDiff").mockResolvedValue(
+      "dummy commit diff content",
+    );
+    vi.spyOn(settings, "getBasePrompt").mockResolvedValue("TEST_BASE_PROMPT");
+    // getDefaultRoot is not called by buildRepoPromptText if meta (with rootPath) is passed
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.clearAllMocks();
+  });
+
+  it("should build prompt text with no diffs if options are empty", async () => {
+    const pull = mockPull({
+      repo: "owner/myrepo", // owner/repo here must match mockResolvedMeta for consistency
+      number: 123,
+      title: "My Test PR",
+      body: "PR Body here.",
+      // Ensure mockPull provides a URL that might need fixing, or test will be trivial for the link part
+      url: "https://github.com/owner/myrepo/123", // Example of a potentially incomplete URL
+      branch: "feature-branch", // Must match mockResolvedMeta
+      files: ["src/main.ts", "README.md"], // Must match mockResolvedMeta
+    });
+
+    const { promptText, blocks } = await buildRepoPromptText(
+      pull,
+      {},
+      undefined,
+      mockResolvedMeta,
+    );
+
+    expect(blocks.length).toBe(0);
+    expect(promptText).toContain("## SETUP");
+    expect(promptText).toContain("cd /tmp/myrepo");
+    expect(promptText).toContain("git checkout feature-branch");
+    expect(promptText).toContain("TEST_BASE_PROMPT");
+    expect(promptText).toContain("### PR #123: My Test PR");
+    expect(promptText).toContain("PR Body here.");
+    // Expectation for the corrected link format
+    expect(promptText).toContain("🔗 https://github.com/owner/myrepo/pull/123");
+    expect(promptText).not.toContain("### FULL PR DIFF");
+    expect(promptText).not.toContain("### LAST COMMIT");
+    expect(promptText).not.toContain("dummy pr diff content");
+    expect(promptText).not.toContain(
+      "… (truncated, open PR in browser for full patch)",
+    ); // No truncation
+    expect(logRepoPromptCall).not.toHaveBeenCalled(); // buildRepoPromptText itself does not call logRepoPromptCall
+  });
+
+  it("should include full PR diff if specified", async () => {
+    const pull = mockPull({
+      number: 123,
+      repo: "owner/myrepo",
+      branch: "feature-branch",
+      files: [],
+    });
+    const { promptText, blocks } = await buildRepoPromptText(
+      pull,
+      { includePr: true },
+      undefined,
+      mockResolvedMeta,
+    );
+
+    expect(gh.getPullRequestDiff).toHaveBeenCalledWith(
+      "owner",
+      "myrepo",
+      123,
+      undefined,
+    );
+    expect(blocks.length).toBe(1);
+    expect(blocks[0].header).toBe("### FULL PR DIFF");
+    expect(blocks[0].patch).toBe("dummy pr diff content");
+    expect(promptText).toContain("### FULL PR DIFF");
+    expect(promptText).toContain("dummy pr diff content");
+  });
+
+  it("should include last commit diff if specified", async () => {
+    const mockLastCommit = {
+      sha: "lastsha1",
+      commit: { message: "Last commit title" },
+    } as PullRequestCommit;
+    vi.spyOn(gh, "listPrCommits").mockResolvedValue([mockLastCommit]);
+    vi.spyOn(gh, "getCommitDiff").mockResolvedValue("diff for lastsha1");
+    const pull = mockPull({
+      number: 102,
+      repo: "owner/myrepo",
+      branch: "feature-branch",
+      files: [],
+    });
+
+    const { promptText, blocks } = await buildRepoPromptText(
+      pull,
+      { includeLastCommit: true },
+      undefined,
+      mockResolvedMeta,
+    );
+
+    expect(gh.listPrCommits).toHaveBeenCalledWith(
+      "owner",
+      "myrepo",
+      102,
+      1,
+      undefined,
+    );
+    expect(gh.getCommitDiff).toHaveBeenCalledWith(
+      "owner",
+      "myrepo",
+      "lastsha1",
+      undefined,
+    );
+    expect(blocks.length).toBe(1);
+    expect(blocks[0].header).toContain(
+      '### LAST COMMIT (lastsha — "Last commit title")',
+    );
+    expect(blocks[0].patch).toBe("diff for lastsha1");
+    expect(promptText).toContain(
+      '### LAST COMMIT (lastsha — "Last commit title")',
+    );
+    expect(promptText).toContain("diff for lastsha1");
+  });
+
+  it("should include specific commits diff if specified", async () => {
+    const specificCommits: PullRequestCommit[] = [
+      { sha: "specsha1", commit: { message: "Specific commit ONE" } },
+      { sha: "specsha2", commit: { message: "Specific commit TWO" } },
+    ] as PullRequestCommit[];
+    vi.spyOn(gh, "listPrCommits").mockResolvedValue(specificCommits);
+
+    vi.spyOn(gh, "getCommitDiff")
+      .mockResolvedValueOnce("diff for specsha1")
+      .mockResolvedValueOnce("diff for specsha2");
+
+    const pull = mockPull({
+      repo: "owner/myrepo",
+      number: 103,
+      branch: "feature-branch",
+      files: [],
+    });
+    const { promptText, blocks } = await buildRepoPromptText(
+      pull,
+      { commits: ["specsha1", "specsha2"] },
+      undefined,
+      mockResolvedMeta,
+    );
+
+    expect(gh.listPrCommits).toHaveBeenCalledWith(
+      "owner",
+      "myrepo",
+      103,
+      250,
+      undefined,
+    );
+    expect(gh.getCommitDiff).toHaveBeenCalledWith(
+      "owner",
+      "myrepo",
+      "specsha1",
+      undefined,
+    );
+    expect(gh.getCommitDiff).toHaveBeenCalledWith(
+      "owner",
+      "myrepo",
+      "specsha2",
+      undefined,
+    );
+    expect(blocks.length).toBe(2);
+    expect(promptText).toContain(
+      '### COMMIT (specsha — "Specific commit ONE")',
+    );
+    expect(promptText).toContain("diff for specsha1");
+    expect(promptText).toContain(
+      '### COMMIT (specsha — "Specific commit TWO")',
+    );
+    expect(promptText).toContain("diff for specsha2");
+  });
+
+  it("should correctly order multiple diff blocks and not truncate", async () => {
+    const mockCommitsForMessages: PullRequestCommit[] = [
+      { sha: "lastsha", commit: { message: "Last commit title" } },
+      { sha: "specsha", commit: { message: "Specific commit title" } },
+    ] as PullRequestCommit[];
+    // Mock for last commit call
+    vi.spyOn(gh, "listPrCommits").mockImplementation(
+      async (_owner, _repo, _pullNumber, limit) => {
+        if (limit === 1)
+          return [mockCommitsForMessages.find((c) => c.sha === "lastsha")!];
+        return mockCommitsForMessages; // For specific commits message lookup
+      },
+    );
+
+    vi.spyOn(gh, "getPullRequestDiff").mockResolvedValue(
+      "FULL PR DIFF CONTENT",
+    );
+    vi.spyOn(gh, "getCommitDiff").mockImplementation(
+      async (_owner, _repo, sha, _token) => {
+        if (sha === "lastsha") return "LAST COMMIT DIFF CONTENT";
+        if (sha === "specsha") return "SPECIFIC COMMIT DIFF CONTENT";
+        return "";
+      },
+    );
+
+    const longContent = "long content ".repeat(1000); // > 8000 chars
+    vi.spyOn(gh, "getPullRequestDiff").mockResolvedValue(longContent);
+
+    const pull = mockPull({
+      repo: "owner/myrepo",
+      number: 300,
+      branch: "feature-branch",
+      files: [], // files array is empty, testing the removal of the guard
+      url: "https://github.com/owner/myrepo/pull/300" // Provide a complete URL for this test case
+    });
+    const result = await buildRepoPromptText(
+      pull,
+      {
+        includePr: true,
+        includeLastCommit: true,
+        commits: ["specsha"],
+      },
+      undefined,
+      mockResolvedMeta,
+    );
+    const { promptText } = result;
+
+    const fullPrIndex = promptText.indexOf("### FULL PR DIFF");
+    const lastCommitIndex = promptText.indexOf("### LAST COMMIT (lastsha");
+    const specificCommitIndex = promptText.indexOf("### COMMIT (specsha");
+
+    expect(fullPrIndex).toBeGreaterThan(-1);
+    expect(lastCommitIndex).toBeGreaterThan(-1);
+    expect(specificCommitIndex).toBeGreaterThan(-1);
+
+    expect(fullPrIndex).toBeLessThan(lastCommitIndex);
+    expect(lastCommitIndex).toBeLessThan(specificCommitIndex);
+
+    expect(promptText).toContain(longContent); // Check for full long content
+    expect(promptText).not.toContain(
+      "… (truncated, open PR in browser for full patch)",
+    );
+    expect(promptText).toContain("LAST COMMIT DIFF CONTENT");
+    expect(promptText).toContain("SPECIFIC COMMIT DIFF CONTENT");
+  });
+});
+// Remove old tests for buildRepoPromptLink that checked prompt encoding or diff content in the URL
+// The old tests for buildRepoPromptLink are effectively split.
+// Some parts are now covered by buildRepoPromptUrl (URL structure, no prompt).
+// Other parts (diff content, prompt structure) are covered by buildRepoPromptText.
+// The test "fills missing branch & files via getPullRequestMeta() and includes PR diff"
+// would now be two separate tests:
+// 1. buildRepoPromptUrl calls getPullRequestMeta if branch/files missing.
+// 2. buildRepoPromptText (when meta is passed) correctly uses that meta, and if includePr, fetches diff.
+// The provided tests for buildRepoPromptUrl and buildRepoPromptText cover these aspects.

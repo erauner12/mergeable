@@ -1,0 +1,55 @@
+.promptDialog {
+  width: 80vw;
+  max-width: 900px;
+  min-height: 300px;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+
+  :global(.bp5-dialog-body) {
+    flex-grow: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden; // Prevent body scroll, manage internally
+    padding-bottom: 0; // Give space to footer
+  }
+}
+
+.scrollableContent {
+  overflow-y: auto;
+  flex-grow: 1;
+  padding-right: 5px; // for scrollbar
+}
+
+.promptBlock {
+  margin-bottom: 15px;
+  border: 1px solid var(--bp5-divider-black);
+  border-radius: 3px;
+
+  .blockHeader {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 12px;
+    background-color: var(--bp5-table-striped-rows-background-color); // Or other subtle background
+
+    h5 {
+      margin: 0;
+      font-size: var(--bp5-font-size);
+    }
+
+    button {
+      margin-left: 8px;
+    }
+  }
+
+  .codeBlock {
+    padding: 10px;
+    margin: 0; // Reset pre margin
+    max-height: 400px; // Limit height of individual diffs
+    overflow-y: auto;
+    white-space: pre-wrap; // Wrap long lines
+    word-break: break-all; // Break long unbroken strings
+    background-color: var(--bp5-code-block-background-color);
+  }
+}

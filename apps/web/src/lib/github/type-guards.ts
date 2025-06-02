@@ -63,7 +63,12 @@ export interface PullRequestNode {
 
 // New isPullRequestNode type guard
 export function isPullRequestNode(n: unknown): n is PullRequestNode {
-  return !!n && typeof n === "object" && (n as any).__typename === "PullRequest";
+  return (
+    !!n &&
+    typeof n === "object" &&
+    "__typename" in n &&
+    (n as { __typename: unknown }).__typename === "PullRequest"
+  );
 }
 
 /** Whether a PullRequest node contains merge-queue data */
@@ -102,10 +107,30 @@ export function hasLatestOpinionatedReviews(
 }
 
 // New helper type guards
-export function hasComments(n: unknown): n is { comments: { nodes?: unknown[] } } {
-  return !!n && typeof n === "object" && "comments" in n && typeof (n as any).comments === "object" && (n as any).comments !== null && "nodes" in (n as any).comments;
+export function hasComments(
+  n: unknown,
+): n is { comments: { nodes?: unknown[] } } {
+  return (
+    !!n &&
+    typeof n === "object" &&
+    "comments" in n &&
+    typeof (n as Record<string, unknown>).comments === "object" &&
+    (n as Record<string, { nodes?: unknown[] }>).comments !== null &&
+    "nodes" in
+      (n as Record<string, { nodes?: unknown[] }>).comments
+  );
 }
 
-export function hasFiles(n: unknown): n is { files: { nodes?: { path: string }[] } } {
-  return !!n && typeof n === "object" && "files" in n && typeof (n as any).files === "object" && (n as any).files !== null && "nodes" in (n as any).files;
+export function hasFiles(
+  n: unknown,
+): n is { files: { nodes?: { path: string }[] } } {
+  return (
+    !!n &&
+    typeof n === "object" &&
+    "files" in n &&
+    typeof (n as Record<string, unknown>).files === "object" &&
+    (n as Record<string, { nodes?: unknown[] }>).files !== null &&
+    "nodes" in
+      (n as Record<string, { nodes?: unknown[] }>).files
+  );
 }

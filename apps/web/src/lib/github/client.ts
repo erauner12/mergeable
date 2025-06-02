@@ -11,14 +11,25 @@ import {
   CheckConclusionState,
   PullRequestReviewDecision,
   PullRequestReviewState,
+  SearchDocument,
+  SearchFullDocument,
   StatusState,
   type CheckRun,
-  type StatusContext,
-  type SearchQuery,
   type SearchFullQuery,
+  type SearchQuery,
+  type StatusContext,
 } from "../../../generated/gql/graphql";
-import { SearchDocument, SearchFullDocument } from "../../../generated/gql/graphql";
+import type { CommentBlockInput } from "../repoprompt";
 import { prepareQuery } from "./search";
+import type { Actor, PullRequestNode } from "./type-guards";
+import {
+  hasComments,
+  hasFiles,
+  hasLatestOpinionatedReviews,
+  hasMergeQueueEntry,
+  hasStatusCheckRollup,
+  isPullRequestNode,
+} from "./type-guards";
 import type {
   Check,
   CheckState,
@@ -29,20 +40,10 @@ import type {
   Team,
   User,
 } from "./types";
-import type { Actor } from "./type-guards";
-import type { PullRequestNode } from "./type-guards";
-import {
-  isPullRequestNode,
-  hasComments,
-  hasFiles,
-  hasLatestOpinionatedReviews,
-  hasMergeQueueEntry,
-  hasStatusCheckRollup,
-} from "./type-guards";
-import type { CommentBlockInput } from "../repoprompt";
 const MyOctokit = Octokit.plugin(throttling);
 
-export type PullRequestCommit = Endpoints["GET /repos/{owner}/{repo}/pulls/{pull_number}/commits"]["response"]["data"][number];
+export type PullRequestCommit =
+  Endpoints["GET /repos/{owner}/{repo}/pulls/{pull_number}/commits"]["response"]["data"][number];
 
 export type Endpoint = {
   auth: string;
@@ -120,10 +121,12 @@ export class DefaultGitHubClient implements GitHubClient {
     const teamsResponse = await octokit.paginate("GET /user/teams", {
       per_page: 100,
     });
-    const teams: Team[] = teamsResponse.map((obj: Endpoints["GET /user/teams"]["response"]["data"][number]) => ({
-      id: obj.node_id,
-      name: `${obj.organization.login}/${obj.slug}`,
-    }));
+    const teams: Team[] = teamsResponse.map(
+      (obj: Endpoints["GET /user/teams"]["response"]["data"][number]) => ({
+        id: obj.node_id,
+        name: `${obj.organization.login}/${obj.slug}`,
+      }),
+    );
     return { user, teams };
   }
 
@@ -152,16 +155,23 @@ export class DefaultGitHubClient implements GitHubClient {
     //     .filter(isNonNull) ?? []
     // );
     // NEW code:
-    const edges = data.search.edges?.filter(isNonNull) ?? [];
-    const pulls = edges
-        .map(edge => edge.node) // Extract node first
-        .filter(isNonNullish) // Filter out null/undefined nodes
-        .filter(isPullRequestNode) // Then, filter for PullRequestNode
-        .map(prNode => this.makePull(prNode)); // Now prNode is correctly typed as PullRequestNode
-    return pulls;
+    const pullsResult: PullProps[] = [];
+    if (data.search.edges) {
+      for (const edge of data.search.edges) {
+        if (!edge) {
+          continue; // Skip null edges
+        }
+        const node = edge.node;
+        // The node itself can be null or not a PullRequest
+        if (isPullRequestNode(node)) {
+          pullsResult.push(this.makePull(node));
+        }
+      }
     }
-    
-    async fetchPullComments(
+    return pullsResult;
+  }
+
+  async fetchPullComments(
     endpoint: Endpoint,
     owner: string,
     repo: string,
@@ -194,19 +204,16 @@ export class DefaultGitHubClient implements GitHubClient {
         repo,
         issue_number: number,
         per_page: 100,
-      }
+      },
     );
 
     // Fetch pull request reviews
-    const reviews = await octokit.paginate(
-      octokit.rest.pulls.listReviews,
-      {
-        owner,
-        repo,
-        pull_number: number,
-        per_page: 100,
-      }
-    );
+    const reviews = await octokit.paginate(octokit.rest.pulls.listReviews, {
+      owner,
+      repo,
+      pull_number: number,
+      per_page: 100,
+    });
 
     // Fetch pull request review comments
     const reviewComments = await octokit.paginate(
@@ -216,7 +223,7 @@ export class DefaultGitHubClient implements GitHubClient {
         repo,
         pull_number: number,
         per_page: 100,
-      }
+      },
     );
 
     // Normalize all comments into CommentBlockInput[]
@@ -253,7 +260,8 @@ export class DefaultGitHubClient implements GitHubClient {
 
     // Reviews (summary, not inline comments)
     for (const r of reviews) {
-      if (r.body) { // Only include reviews that have a body text
+      if (r.body) {
+        // Only include reviews that have a body text
         commentBlocks.push({
           id: r.id.toString(),
           kind: "comment",
@@ -268,7 +276,10 @@ export class DefaultGitHubClient implements GitHubClient {
     }
 
     // Sort by createdAt ascending
-    commentBlocks.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+    commentBlocks.sort(
+      (a, b) =>
+        new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
+    );
 
     return commentBlocks;
   }
@@ -294,11 +305,18 @@ export class DefaultGitHubClient implements GitHubClient {
     }
 
     // Use hasLatestOpinionatedReviews guard for reviews
-    if (hasLatestOpinionatedReviews(prNode) && prNode.latestOpinionatedReviews?.nodes) {
+    if (
+      hasLatestOpinionatedReviews(prNode) &&
+      prNode.latestOpinionatedReviews?.nodes
+    ) {
       for (const node of prNode.latestOpinionatedReviews.nodes) {
         if (!node) continue;
         // Use submittedAt if available, otherwise createdAt for participant activity
-        this.addOrUpdateParticipant(participants, node.author, node.submittedAt ?? node.createdAt);
+        this.addOrUpdateParticipant(
+          participants,
+          node.author,
+          node.submittedAt ?? node.createdAt,
+        );
       }
     }
 
@@ -314,7 +332,9 @@ export class DefaultGitHubClient implements GitHubClient {
       }
     }
 
-    const mqState = hasMergeQueueEntry(prNode) ? prNode.mergeQueueEntry?.state : undefined;
+    const mqState = hasMergeQueueEntry(prNode)
+      ? prNode.mergeQueueEntry?.state
+      : undefined;
 
     return {
       id: prNode.id,
@@ -332,58 +352,81 @@ export class DefaultGitHubClient implements GitHubClient {
             : "pending",
       createdAt: this.toDate(prNode.createdAt),
       updatedAt: this.toDate(prNode.updatedAt),
-      enqueuedAt: hasMergeQueueEntry(prNode) ? this.toDate(prNode.mergeQueueEntry?.enqueuedAt) : undefined,
+      enqueuedAt: hasMergeQueueEntry(prNode)
+        ? this.toDate(prNode.mergeQueueEntry?.enqueuedAt)
+        : undefined,
       mergedAt: this.toDate(prNode.mergedAt),
       closedAt: this.toDate(prNode.closedAt),
       locked: prNode.locked ?? false,
       url: prNode.url,
       labels:
         prNode.labels?.nodes
-          ?.filter((n: { name?: string } | null): n is { name: string } => isNonNull(n))
+          ?.filter((n: { name?: string } | null): n is { name: string } =>
+            isNonNull(n),
+          )
           .map((n: { name: string }) => n.name) ?? [],
       additions: prNode.additions ?? 0,
       deletions: prNode.deletions ?? 0,
       author: this.makeUser(prNode.author),
-      requestedReviewers: prNode.reviewRequests?.nodes?.map(
-        req => this.makeUser(req?.requestedReviewer ?? null)
-      ).filter(isNonNull) ?? [],
-      requestedTeams: prNode.reviewRequests?.nodes?.map(
-        req => this.makeTeam(req?.requestedReviewer ?? null)
-      ).filter(isNonNull) ?? [],
-      reviews: hasLatestOpinionatedReviews(prNode) && prNode.latestOpinionatedReviews?.nodes
-        ? (() => {
-            const reviews = prNode.latestOpinionatedReviews.nodes?.filter(
-              (n: any): n is typeof n => isNonNull(n)
-            );
-            return (
-              reviews
-                ?.filter(
-                  (n: { state: PullRequestReviewState }) =>
-                    n.state !== PullRequestReviewState.Pending
+      requestedReviewers:
+        prNode.reviewRequests?.nodes
+          ?.map((req) => this.makeUser(req?.requestedReviewer ?? null))
+          .filter(isNonNull) ?? [],
+      requestedTeams:
+        prNode.reviewRequests?.nodes
+          ?.map((req) => this.makeTeam(req?.requestedReviewer ?? null))
+          .filter(isNonNull) ?? [],
+      reviews:
+        hasLatestOpinionatedReviews(prNode) &&
+        prNode.latestOpinionatedReviews?.nodes
+          ? (() => {
+              const reviews = prNode.latestOpinionatedReviews.nodes?.filter(
+                (n): n is NonNullable<(typeof prNode.latestOpinionatedReviews.nodes)[number]> =>
+                  isNonNull(n),
+              ) ?? [];
+              return (
+                reviews
+                  ?.filter(
+                    (n) =>
+                      n.state !== PullRequestReviewState.Pending,
+                  )
+                  .map(
+                    (n) => ({
+                      author: this.makeUser(n.author),
+                      collaborator: n.authorCanPushToRepository,
+                      approved: n.state === PullRequestReviewState.Approved,
+                    }),
+                  ) ?? []
+              );
+            })()
+          : [],
+      checks:
+        hasStatusCheckRollup(prNode) &&
+        prNode.statusCheckRollup?.contexts?.nodes
+          ? (() => {
+              const nodes = (prNode.statusCheckRollup.contexts.nodes ?? [])
+                .filter(
+                  (
+                    c: CheckRun | StatusContext | null | undefined,
+                  ): c is CheckRun | StatusContext => isNonNullish(c),
                 )
-                .map((n: { author: Actor; authorCanPushToRepository: boolean; state: PullRequestReviewState }) => ({
-                  author: this.makeUser(n.author),
-                  collaborator: n.authorCanPushToRepository,
-                  approved: n.state === PullRequestReviewState.Approved,
-                })) ?? []
-            );
-          })()
-        : [],
-      checks: hasStatusCheckRollup(prNode) && prNode.statusCheckRollup?.contexts?.nodes
-        ? (() => {
-            const nodes = (prNode.statusCheckRollup.contexts.nodes ?? [])
-              .filter((c: CheckRun | StatusContext | null | undefined): c is CheckRun | StatusContext => isNonNullish(c))
-              .map((c: CheckRun | StatusContext) => c);
-            return nodes.map((c: CheckRun | StatusContext) => this.makeCheck(c));
-          })()
-        : [],
+                .map((c: CheckRun | StatusContext) => c);
+              return nodes.map((c: CheckRun | StatusContext) =>
+                this.makeCheck(c),
+              );
+            })()
+          : [],
       discussions,
       branch: prNode.headRefName ?? "",
       files:
         hasFiles(prNode) && prNode.files?.nodes
-          ? prNode.files.nodes.filter(
-              (f: { path?: string } | null | undefined): f is { path: string } => isNonNullish(f)
-            ).map((f: { path: string }) => f.path)
+          ? prNode.files.nodes
+              .filter(
+                (
+                  f: { path?: string } | null | undefined,
+                ): f is { path: string } => isNonNullish(f),
+              )
+              .map((f: { path: string }) => f.path)
           : [],
       participants,
     };
@@ -411,7 +454,12 @@ export class DefaultGitHubClient implements GitHubClient {
     // Apply cast as Actor type in type-guards.ts cannot be updated (file not provided)
     if (obj?.__typename === "Team") {
       // Cast obj to the expected shape for a Team actor
-      const team = obj as { __typename: "Team"; id: string; name?: string; slug?: string; /* other team properties if available */ };
+      const team = obj as {
+        __typename: "Team";
+        id: string;
+        name?: string;
+        slug?: string /* other team properties if available */;
+      };
       return {
         id: team.id,
         name: team.name ?? team.slug ?? "",
@@ -425,36 +473,51 @@ export class DefaultGitHubClient implements GitHubClient {
     if (prNode.merged) return "merged";
     if (prNode.closed) return "closed";
     if (hasMergeQueueEntry(prNode) && prNode.mergeQueueEntry) return "enqueued";
-    if (prNode.reviewDecision === PullRequestReviewDecision.Approved) return "approved";
+    if (prNode.reviewDecision === PullRequestReviewDecision.Approved)
+      return "approved";
     return "pending";
   }
 
-  private toCheckStateFromRollup(rollup: PullRequestNode["statusCheckRollup"]): CheckState {
+  private toCheckStateFromRollup(
+    rollup: PullRequestNode["statusCheckRollup"],
+  ): CheckState {
     if (!rollup || !rollup.state) return "pending";
     switch (rollup.state) {
-      case StatusState.Success: return "success";
-      case StatusState.Error: return "error";
-      case StatusState.Failure: return "failure";
-      case StatusState.Pending: return "pending";
-      default: return "pending";
+      case StatusState.Success:
+        return "success";
+      case StatusState.Error:
+        return "error";
+      case StatusState.Failure:
+        return "failure";
+      case StatusState.Pending:
+        return "pending";
+      default:
+        return "pending";
     }
   }
-  
+
   private makeCheck(obj: CheckRun | StatusContext): Check {
-    if ("name" in obj) { // CheckRun
+    if ("name" in obj) {
+      // CheckRun
       return {
         name: obj.name,
         state:
           obj.conclusion === CheckConclusionState.Success
             ? "success"
-            // Map other CheckConclusionState to CheckState if needed
-            : obj.conclusion === CheckConclusionState.Failure || obj.conclusion === CheckConclusionState.Cancelled || obj.conclusion === CheckConclusionState.TimedOut || obj.conclusion === CheckConclusionState.ActionRequired || obj.conclusion === CheckConclusionState.Stale || obj.conclusion === CheckConclusionState.Skipped
-            ? "failure"
-            : "pending",
+            : // Map other CheckConclusionState to CheckState if needed
+              obj.conclusion === CheckConclusionState.Failure ||
+                obj.conclusion === CheckConclusionState.Cancelled ||
+                obj.conclusion === CheckConclusionState.TimedOut ||
+                obj.conclusion === CheckConclusionState.ActionRequired ||
+                obj.conclusion === CheckConclusionState.Stale ||
+                obj.conclusion === CheckConclusionState.Skipped
+              ? "failure"
+              : "pending",
         description: obj.title ?? obj.name,
         url: obj.url ? String(obj.url) : null,
       };
-    } else { // StatusContext
+    } else {
+      // StatusContext
       return {
         name: obj.context,
         state: this.toCheckState(obj.state),
@@ -470,7 +533,7 @@ export class DefaultGitHubClient implements GitHubClient {
     } else if (v instanceof Date) {
       return v.toISOString();
     } else if (typeof v === "string") {
-        return v;
+      return v;
     }
     return String(v);
   }
@@ -517,7 +580,8 @@ export class DefaultGitHubClient implements GitHubClient {
 }
 
 export const gitHubClient = new DefaultGitHubClient();
-export const fetchPullComments = gitHubClient.fetchPullComments.bind(gitHubClient);
+export const fetchPullComments =
+  gitHubClient.fetchPullComments.bind(gitHubClient);
 
 export async function getPullRequestMeta(
   owner: string,
@@ -535,10 +599,12 @@ export async function getPullRequestMeta(
   const branch = pr.head.ref; // now typed
 
   // changed files (may be paginated)
-  const filesResp = await octokit.paginate(
-    octokit.rest.pulls.listFiles,
-    { owner, repo, pull_number: number, per_page: 100 },
-  );
+  const filesResp = await octokit.paginate(octokit.rest.pulls.listFiles, {
+    owner,
+    repo,
+    pull_number: number,
+    per_page: 100,
+  });
   const files = filesResp.map((f) => f.filename);
 
   return { branch, files };
@@ -561,15 +627,12 @@ export async function listPrCommits(
 ): Promise<PullRequestCommit[]> {
   // TODO: Use proper Octokit commit type: Endpoints["GET /repos/{owner}/{repo}/pulls/{pull_number}/commits"]["response"]["data"]
   const octokit = token ? new Octokit({ auth: token }) : new Octokit();
-  const commits = (await octokit.paginate(
-    octokit.rest.pulls.listCommits,
-    {
-      owner,
-      repo,
-      pull_number,
-      per_page: 100,
-    },
-  )) as unknown as PullRequestCommit[];
+  const commits = (await octokit.paginate(octokit.rest.pulls.listCommits, {
+    owner,
+    repo,
+    pull_number,
+    per_page: 100,
+  })) as unknown as PullRequestCommit[];
   // .slice(-limit) gets the last 'limit' elements, which are the newest ones.
   return commits.slice(-limit);
 }

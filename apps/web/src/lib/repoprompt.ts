@@ -1,9 +1,11 @@
 import type { Endpoint } from "./github/client"; // Import Endpoint type
 import {
+  fetchPullComments, // New import
   getCommitDiff,
   getPullRequestDiff,
   getPullRequestMeta,
   listPrCommits,
+  gitHubClient, // Ensure gitHubClient is imported if used directly, or pass as param
 } from "./github/client";
 import type { Pull } from "./github/types";
 import { getBasePrompt, getDefaultRoot } from "./settings";
@@ -17,22 +19,46 @@ import { getBasePrompt, getDefaultRoot } from "./settings";
 
 export type LaunchMode = "workspace" | "folder";
 
-export interface DiffOptions {
-  includePr?: boolean;
-  includeLastCommit?: boolean;
-  /** @internal Currently unused by the UI – always passed as `[]` from DiffPickerDialog. Kept for API compatibility. */
-  commits?: string[]; // Array of commit SHAs
+// New: CommentBlockInput
+export interface CommentBlockInput {
+  id: string; // e.g., "pr-details", "issue-123", "review-456", "thread-file.ts-10-789"
+  kind: "comment";
+  header: string; // e.g., "### PR #123 DETAILS: Title", "### ISSUE COMMENT", "### REVIEW BY @user (APPROVED)"
+  commentBody: string; // The actual text content
+  author: string; // Login of the author or relevant name
+  authorAvatarUrl?: string; // Optional avatar URL
+  timestamp: string; // ISO date string
+  filePath?: string; // For threads
+  line?: number; // For threads
 }
 
+// Updated: DiffBlockInput to include 'kind'
 export interface DiffBlockInput {
+  id: string; // New: e.g., "diff-pr", "diff-last-commit", "diff-commit-sha"
+  kind: "diff";
   header: string;
   patch: string;
 }
 
+// New: PromptBlock discriminated union
+export type PromptBlock = DiffBlockInput | CommentBlockInput;
+
+export interface DiffOptions {
+  includePr?: boolean;
+  includeLastCommit?: boolean;
+  includeComments?: boolean; // NEW
+  /** @internal Currently unused by the UI – always passed as `[]` from DiffPickerDialog. Kept for API compatibility. */
+  commits?: string[]; // Array of commit SHAs
+}
+
+// Old DiffBlockInput (now part of the union, effectively)
+// export interface DiffBlockInput {
+//   header: string;
+//   patch: string;
+// }
+
 /**
  * Resolved metadata about a pull request, typically derived by `buildRepoPromptUrl`.
- * All properties (`owner`, `repo`, `branch`, `files`) are expected to be non-empty
- * and validated by the producer (e.g., `buildRepoPromptUrl` fetches them if initially missing).
  */
 export interface ResolvedPullMeta {
   owner: string;
@@ -64,18 +90,27 @@ export function logRepoPromptCall(details: {
 /** The PR object we need here must expose the head-branch name. */
 type PullWithBranch = Pull & { branch: string };
 
-function formatDiffBlocksForPrompt(diffBlocks: DiffBlockInput[]): string {
-  if (diffBlocks.length === 0) {
+// Renamed and updated to handle single PromptBlock
+export function formatPromptBlock(block: PromptBlock): string {
+  if (block.kind === "diff") {
+    // keep the patch exactly as GitHub returned it
+    return `${block.header}\n\`\`\`diff\n${block.patch}\n\`\`\`\n`;
+  } else if (block.kind === "comment") {
+    const dateString = new Date(block.timestamp).toLocaleDateString("en-CA", {
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+    });
+    return `${block.header}\n> _${block.author} · ${dateString}_\n\n${block.commentBody}\n`;
+  }
+  return ""; // Should not happen
+}
+
+function formatListOfPromptBlocks(blocks: PromptBlock[]): string {
+  if (blocks.length === 0) {
     return "";
   }
-  return diffBlocks
-    .map(
-      (block) =>
-        // keep the patch exactly as GitHub returned it
-        `${block.header}\n\`\`\`diff\n${block.patch}\n\`\`\`\n`,
-    )
-    .join("\n")
-    .trimEnd();
+  return blocks.map(formatPromptBlock).join("\n").trimEnd();
 }
 
 /**
@@ -141,36 +176,66 @@ export async function buildRepoPromptUrl(
 }
 
 /**
- * Builds the prompt text and structured diff blocks for a pull request.
+ * Builds the prompt text and structured prompt blocks for a pull request.
  * @param pull The pull request object.
- * @param diffOptions Options for including different types of diffs.
+ * @param diffOptions Options for including different types of diffs and comments.
  * @param endpoint Optional endpoint configuration for authenticated requests.
  * @param meta Resolved metadata (owner, repo, branch, rootPath) from buildRepoPromptUrl.
- * @returns An object containing the full prompt text and an array of diff blocks.
+ * @returns An object containing the full prompt text (of initially selected blocks) and an array of all generated prompt blocks.
  */
 export async function buildRepoPromptText(
   pull: PullWithBranch,
   diffOptions: DiffOptions = {},
   endpoint: Endpoint | undefined,
-  meta: ResolvedPullMeta, // This 'meta' is from buildRepoPromptUrl's return
-): Promise<{ promptText: string; blocks: DiffBlockInput[] }> {
-  const { owner, repo, branch, rootPath } = meta; // Use destructured values from the 'meta' param
+  meta: ResolvedPullMeta,
+): Promise<{ promptText: string; blocks: PromptBlock[] }> {
+  const { owner, repo, branch, rootPath } = meta;
   const token = endpoint?.auth;
 
-  const allDiffBlocks: DiffBlockInput[] = [];
+  const allPromptBlocks: PromptBlock[] = [];
+  const initiallySelectedBlocks: PromptBlock[] = []; // For generating the initial promptText
 
-  // 1. Full PR Diff
-  if (diffOptions.includePr) {
-    const prDiff = await getPullRequestDiff(owner, repo, pull.number, token);
-    if (prDiff.trim()) {
-      allDiffBlocks.push({
-        header: "### FULL PR DIFF",
-        patch: prDiff,
-      });
+  // 0. PR Details Block (always first, always initially selected)
+  const prDetailsBlock: CommentBlockInput = {
+    id: `pr-details-${pull.id}`,
+    kind: "comment",
+    header: `### PR #${pull.number} DETAILS: ${pull.title}`,
+    commentBody: pull.body?.trim() || "_No description provided._",
+    author: pull.author.name,
+    authorAvatarUrl: pull.author.avatarUrl,
+    timestamp: pull.createdAt,
+  };
+  allPromptBlocks.push(prDetailsBlock);
+  initiallySelectedBlocks.push(prDetailsBlock);
+
+
+  // 1. Comments, Reviews, Threads (if requested)
+  if (diffOptions.includeComments) {
+    if (endpoint) { // fetchPullComments requires an endpoint
+      const commentBlocks = await fetchPullComments(endpoint, owner, repo, pull.number);
+      allPromptBlocks.push(...commentBlocks);
+      // Comment blocks are NOT initially selected by default for the promptText
+    } else {
+      console.warn("Cannot fetch comments: endpoint is undefined.");
     }
   }
 
-  // 2. Last Commit Diff
+  // 2. Full PR Diff
+  if (diffOptions.includePr) {
+    const prDiff = await getPullRequestDiff(owner, repo, pull.number, token);
+    if (prDiff.trim()) {
+      const block: DiffBlockInput = {
+        id: `diff-pr-${pull.id}`,
+        kind: "diff",
+        header: "### FULL PR DIFF",
+        patch: prDiff,
+      };
+      allPromptBlocks.push(block);
+      initiallySelectedBlocks.push(block);
+    }
+  }
+
+  // 3. Last Commit Diff
   if (diffOptions.includeLastCommit) {
     const prCommits = await listPrCommits(owner, repo, pull.number, 1, token);
     if (prCommits.length > 0) {
@@ -187,10 +252,14 @@ export async function buildRepoPromptText(
           const commitTitle = (
             lastCommit.commit.message || "No commit message"
           ).split("\n")[0];
-          allDiffBlocks.push({
+          const block: DiffBlockInput = {
+            id: `diff-last-commit-${lastCommit.sha}`,
+            kind: "diff",
             header: `### LAST COMMIT (${shortSha} — "${commitTitle}")`,
             patch: lastCommitDiff,
-          });
+          };
+          allPromptBlocks.push(block);
+          initiallySelectedBlocks.push(block);
         }
       } else {
         console.warn(
@@ -199,10 +268,11 @@ export async function buildRepoPromptText(
       }
     } else {
       console.warn(`PR #${pull.number} has no commits for 'last commit' diff.`);
+      }
     }
   }
 
-  // 3. Specific Commits Diffs
+  // 4. Specific Commits Diffs
   if (diffOptions.commits && diffOptions.commits.length > 0) {
     const allPrCommitsForMessages = await listPrCommits(
       owner,
@@ -224,15 +294,19 @@ export async function buildRepoPromptText(
         const shortSha = sha.slice(0, 7);
         const commitTitle =
           commitMessageMap.get(sha) || "Unknown commit message";
-        allDiffBlocks.push({
+        const block: DiffBlockInput = {
+          id: `diff-commit-${sha}`,
+          kind: "diff",
           header: `### COMMIT (${shortSha} — "${commitTitle}")`,
           patch: commitDiff,
-        });
+        };
+        allPromptBlocks.push(block);
+        initiallySelectedBlocks.push(block); // Assuming specific commits are also initially selected if requested
       }
     }
   }
 
-  const combinedDiffContent = formatDiffBlocksForPrompt(allDiffBlocks);
+  const combinedInitialContent = formatListOfPromptBlocks(initiallySelectedBlocks);
 
   const basePrompt = await getBasePrompt();
   const promptPayloadParts: string[] = [
@@ -245,15 +319,10 @@ export async function buildRepoPromptText(
     "",
     basePrompt,
     "",
-    // Corrected lines: use 'pull' for PR-specific details
-    `### PR #${pull.number}: ${pull.title}`,
-    "",
-    pull.body ?? "",
-    "",
   ];
 
-  if (combinedDiffContent.trim()) {
-    promptPayloadParts.push(combinedDiffContent, "");
+  if (combinedInitialContent.trim()) {
+    promptPayloadParts.push(combinedInitialContent, "");
   }
 
   // Ensure the PR link is correctly formatted
@@ -261,7 +330,7 @@ export async function buildRepoPromptText(
     ? pull.url
     : `https://github.com/${owner}/${repo}/pull/${pull.number}`;
   promptPayloadParts.push(`🔗 ${prLink}`);
-  const promptText = promptPayloadParts.join("\n");
+  const promptTextForInitialSelection = promptPayloadParts.join("\n");
 
-  return { promptText, blocks: allDiffBlocks };
+  return { promptText: promptTextForInitialSelection, blocks: allPromptBlocks };
 }

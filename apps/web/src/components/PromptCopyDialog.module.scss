@@ -28,18 +28,28 @@
 
   .blockHeader {
     display: flex;
-    justify-content: space-between;
+    // justify-content: space-between; // Adjusted for checkbox
     align-items: center;
     padding: 8px 12px;
-    background-color: var(--bp5-table-striped-rows-background-color); // Or other subtle background
+    background-color: var(--bp5-table-striped-rows-background-color);
+
+    .blockCheckbox { // Style for checkbox
+      margin-right: 10px;
+      margin-bottom: 0; // Override default Blueprint checkbox margin
+    }
 
     h5 {
       margin: 0;
       font-size: var(--bp5-font-size);
+      flex-grow: 1; // Allow H5 to take available space
     }
-
-    button {
-      margin-left: 8px;
+    
+    .blockActions { // Container for buttons
+        display: flex;
+        align-items: center;
+        button {
+          margin-left: 8px;
+        }
     }
   }
 
@@ -51,5 +61,33 @@
     white-space: pre-wrap; // Wrap long lines
     word-break: break-all; // Break long unbroken strings
     background-color: var(--bp5-code-block-background-color);
+  }
+
+  // Styles for comment block content
+  .commentBlockContent {
+    padding: 10px;
+    background-color: var(--bp5-code-block-background-color); // Or a slightly different bg for comments
+
+    .commentMeta {
+      display: flex;
+      align-items: center;
+      margin-bottom: 8px;
+      font-size: var(--bp5-font-size-small);
+      color: var(--bp5-text-color-muted);
+
+      .avatar {
+        width: 20px;
+        height: 20px;
+        border-radius: 50%;
+        margin-right: 6px;
+      }
+      .filePath {
+        margin-left: auto; // Pushes filePath to the right
+        font-style: italic;
+      }
+    }
+    // .codeBlock inside .commentBlockContent is already styled by the general .codeBlock
+    // but if specific overrides are needed for comment bodies (e.g. if not using <pre>):
+    // pre { /* ... */ } or .markdown-body { /* ... */ }
   }
 }

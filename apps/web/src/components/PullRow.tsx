@@ -1,14 +1,14 @@
 import { Icon, Tag, Tooltip } from "@blueprintjs/core";
 import { useState } from "react";
-import type { Endpoint } from "../lib/github/client"; // Import Endpoint type
+import type { Endpoint } from "../lib/github/client";
 import type { Pull } from "../lib/github/types";
 import { toggleStar } from "../lib/mutations";
-import { useConnections, useStars } from "../lib/queries"; // Import useConnections
+import { useConnections, useStars } from "../lib/queries";
 import {
   buildRepoPromptText,
-  buildRepoPromptUrl, // New import
+  buildRepoPromptUrl,
   logRepoPromptCall,
-  type DiffBlockInput, // New import
+  type PromptBlock, // Updated from DiffBlockInput
   type DiffOptions,
   type LaunchMode,
   type ResolvedPullMeta,
@@ -17,7 +17,7 @@ import { computeSize } from "../lib/size";
 import CopyToClipboardIcon from "./CopyToClipboardIcon";
 import DiffPickerDialog from "./DiffPickerDialog";
 import IconWithTooltip from "./IconWithTooltip";
-import PromptCopyDialog from "./PromptCopyDialog"; // New import
+import PromptCopyDialog from "./PromptCopyDialog";
 import styles from "./PullRow.module.scss";
 import TimeAgo from "./TimeAgo";
 
@@ -38,26 +38,23 @@ const formatDate = (d: string) =>
 export default function PullRow({ pull, sizes }: PullRowProps) {
   const [active, setActive] = useState(false);
   const stars = useStars();
-  const { data: connections } = useConnections(); // Get connections
+  const { data: connections } = useConnections();
 
-  // 🚀 New state for DiffPickerDialog
   const [pickerOpen, setPickerOpen] = useState(false);
   const [currentLaunchMode, setCurrentLaunchMode] =
     useState<LaunchMode>("workspace");
 
-  // State for PromptCopyDialog
   const [promptCopyState, setPromptCopyState] = useState<{
     isOpen: boolean;
-    promptText: string;
-    blocks: DiffBlockInput[];
+    initialPromptText: string; // Renamed from promptText
+    blocks: PromptBlock[]; // Updated type
+    initialSelectedBlockIds: Set<string>; // New: for pre-selecting blocks in PromptCopyDialog
     prTitle?: string;
-    repoPromptUrl?: string; // new
-    resolvedMeta?: ResolvedPullMeta; // new
-  }>({ isOpen: false, promptText: "", blocks: [], prTitle: "", repoPromptUrl: undefined, resolvedMeta: undefined });
+    repoPromptUrl?: string;
+    resolvedMeta?: ResolvedPullMeta;
+  }>({ isOpen: false, initialPromptText: "", blocks: [], initialSelectedBlockIds: new Set(), prTitle: "", repoPromptUrl: undefined, resolvedMeta: undefined });
 
-  // 🚀 Updated launch logic to use DiffOptions
   const handleLaunch = async (diffOpts?: DiffOptions) => {
-    // pickerOpen will be set to false by onConfirm or onClose from DiffPickerDialog
     try {
       const currentConn = connections?.find((c) => c.id === pull.connection);
       let endpoint: Endpoint | undefined = undefined;
@@ -82,21 +79,41 @@ export default function PullRow({ pull, sizes }: PullRowProps) {
       // window.open(repoPromptUrl, "_blank");
 
       // 3. Build prompt text and blocks using resolved metadata
-      const { promptText, blocks } = await buildRepoPromptText(
+      const { promptText: generatedInitialPromptText, blocks: allPromptBlocks } = await buildRepoPromptText(
         pull,
-        diffOpts, // These are the options from DiffPickerDialog
+        diffOpts,
         endpoint,
         resolvedMeta,
       );
 
+      // Determine initially selected block IDs for PromptCopyDialog
+      const newInitialSelectedBlockIds = new Set<string>();
+      allPromptBlocks.forEach(block => {
+        if (block.id.startsWith('pr-details')) { // PR details always selected
+          newInitialSelectedBlockIds.add(block.id);
+        } else if (block.kind === 'diff') {
+          if (diffOpts?.includePr && block.id.startsWith('diff-pr')) {
+            newInitialSelectedBlockIds.add(block.id);
+          }
+          if (diffOpts?.includeLastCommit && block.id.startsWith('diff-last-commit')) {
+            newInitialSelectedBlockIds.add(block.id);
+          }
+          // Add logic for specific commits if that feature is re-enabled for selection
+        }
+        // Comment blocks (from includeComments) are not initially selected for the prompt text by default
+        // but will be available in the dialog.
+      });
+
+
       // 4. Set state to open the PromptCopyDialog
       setPromptCopyState({
         isOpen: true,
-        promptText,
-        blocks,
+        initialPromptText: generatedInitialPromptText, // This is the text of initially selected blocks
+        blocks: allPromptBlocks, // All generated blocks
+        initialSelectedBlockIds: newInitialSelectedBlockIds,
         prTitle: pull.title,
-        repoPromptUrl, // new
-        resolvedMeta,  // new
+        repoPromptUrl,
+        resolvedMeta,
       });
 
       // 5. Log the call - REMOVED (will be done via onOpenRepoPrompt callback)
@@ -279,11 +296,12 @@ export default function PullRow({ pull, sizes }: PullRowProps) {
       {/* Render PromptCopyDialog */}
       <PromptCopyDialog
         isOpen={promptCopyState.isOpen}
-        promptText={promptCopyState.promptText}
+        initialPromptText={promptCopyState.initialPromptText}
         blocks={promptCopyState.blocks}
+        initialSelectedBlockIds={promptCopyState.initialSelectedBlockIds}
         prTitle={promptCopyState.prTitle}
         repoPromptUrl={promptCopyState.repoPromptUrl}
-        onOpenRepoPrompt={() => {
+        onOpenRepoPrompt={(selectedText) => { // Receive selectedText
           if (!promptCopyState.resolvedMeta) {
             console.error("Resolved meta not available for logging RepoPrompt call");
             return;
@@ -298,10 +316,10 @@ export default function PullRow({ pull, sizes }: PullRowProps) {
               focus: true,
               ephemeral: currentLaunchMode === 'folder',
             },
-            promptPreview:
-              promptCopyState.promptText.length > 120
-                ? `${promptCopyState.promptText.slice(0, 120)}…`
-                : promptCopyState.promptText,
+            promptPreview: // Use selectedText for preview
+              selectedText.length > 120
+                ? `${selectedText.slice(0, 120)}…`
+                : selectedText,
           });
         }}
         onClose={() =>

@@ -30,41 +30,12 @@ import type {
   Team,
   User,
 } from "./types";
+import type { CommentBlockInput } from "../repoprompt"; // Import CommentBlockInput
 
-// single commit item returned by pulls.listCommits
-export type PullRequestCommit =
-  Endpoints["GET /repos/{owner}/{repo}/pulls/{pull_number}/commits"]["response"]["data"][number];
-
-const MyOctokit = Octokit.plugin(throttling);
-
-export type Endpoint = {
-  auth: string;
-  baseUrl: string;
-};
-
-export interface GitHubClient {
-  getViewer(endpoint: Endpoint): Promise<Profile>;
-  searchPulls(
-    endpoint: Endpoint,
-    search: string,
-    orgs: string[],
-    limit: number,
-  ): Promise<PullProps[]>;
-}
-
-type ArrayElement<T> = T extends (infer U)[] ? U : never;
-
-// TODO: infer from GraphQL
-type Actor =
-  | {
-      __typename: "Bot" | "Mannequin" | "User" | "EnterpriseUserAccount";
-      id: string;
-      login: string;
-      avatarUrl: string;
-    }
-  | { __typename: "Organization" }
-  | undefined
-  | null;
+// Type aliases for Octokit responses
+type IssueComment = Endpoints["GET /repos/{owner}/{repo}/issues/{issue_number}/comments"]["response"]["data"][number];
+type PullReview = Endpoints["GET /repos/{owner}/{repo}/pulls/{pull_number}/reviews"]["response"]["data"][number];
+type PullReviewComment = Endpoints["GET /repos/{owner}/{repo}/pulls/{pull_number}/comments"]["response"]["data"][number];
 
 /** Narrow Octokit response when `mediaType.format === 'diff'` */
 type DiffStringResponse = { data: string };
@@ -142,162 +113,137 @@ export class DefaultGitHubClient implements GitHubClient {
     );
   }
 
-  private getOctokit(endpoint: Endpoint): Octokit {
-    const key = `${endpoint.baseUrl}:${endpoint.auth}`;
-    if (!(key in this.octokits)) {
-      this.octokits[key] = new MyOctokit({
-        auth: endpoint.auth,
-        baseUrl: endpoint.baseUrl,
-        throttle: {
-          // For now, allow retries in all situations.
-          onRateLimit: (retryAfter, options, octokit) => {
-            octokit.log.warn(
-              `Request quota exhausted for request ${options.method} ${options.url}, retrying after ${retryAfter} seconds`,
-            );
-            return true;
-          },
-          onSecondaryRateLimit: (retryAfter, options, octokit) => {
-            octokit.log.warn(
-              `Secondary rate limit detected for request ${options.method} ${options.url}, retrying after ${retryAfter} seconds`,
-            );
-            return true;
-          },
-        },
-      });
+  // New method: fetchPullComments
+  async fetchPullComments(
+    endpoint: Endpoint,
+    owner: string,
+    repo: string,
+    number: number,
+  ): Promise<CommentBlockInput[]> {
+    const cacheKey = `${endpoint.auth}:${owner}/${repo}/${number}`;
+    if (this.commentCache.has(cacheKey)) {
+      return this.commentCache.get(cacheKey)!;
     }
-    return this.octokits[key];
+
+    const promise = this._fetchPullCommentsLogic(endpoint, owner, repo, number);
+    this.commentCache.set(cacheKey, promise);
+    // Clear cache entry if promise rejects to allow retries
+    promise.catch(() => this.commentCache.delete(cacheKey));
+    return promise;
   }
 
-  private makePull(
-    res: ArrayElement<
-      SearchQuery["search"]["edges"] | SearchFullQuery["search"]["edges"]
-    >,
-  ): PullProps | null {
-    if (!res || res.node?.__typename !== "PullRequest") {
-      return null;
-    }
-    const discussions: Discussion[] = [];
-    let participants: Participant[] = [];
-    let numComments = 0;
+  private async _fetchPullCommentsLogic(
+    endpoint: Endpoint,
+    owner: string,
+    repo: string,
+    number: number,
+  ): Promise<CommentBlockInput[]> {
+    const octokit = this.getOctokit(endpoint);
+    const results: CommentBlockInput[] = [];
 
-    // Add top-level comments.
-    if (res.node.comments.nodes) {
-      for (const comment of res.node.comments.nodes) {
-        if (comment) {
-          numComments++;
-          this.addOrUpdateParticipant(
-            participants,
-            comment.author,
-            comment.publishedAt ?? comment.createdAt,
-          );
+    // 1. Fetch issue comments (general comments on the PR)
+    try {
+      const issueComments = await octokit.paginate(octokit.rest.issues.listComments, {
+        owner,
+        repo,
+        issue_number: number,
+        per_page: 100,
+      });
+      issueComments.forEach((comment: IssueComment) => {
+        if (comment.body) { // Ensure there's a body
+          results.push({
+            id: `issuecomment-${comment.id}`,
+            kind: "comment",
+            header: `### ISSUE COMMENT by @${comment.user?.login || "unknown"}`,
+            commentBody: comment.body_text || comment.body || "",
+            author: comment.user?.login || "unknown",
+            authorAvatarUrl: comment.user?.avatar_url,
+            timestamp: comment.created_at,
+          });
+        }
+      });
+    } catch (error) {
+      console.error("Failed to fetch issue comments:", error);
+    }
+
+    // 2. Fetch pull request reviews (review summaries)
+    try {
+      const reviews = await octokit.paginate(octokit.rest.pulls.listReviews, {
+        owner,
+        repo,
+        pull_number: number,
+        per_page: 100,
+      });
+      reviews.forEach((review: PullReview) => {
+        // Only include reviews that have a body and are not just pending
+        if (review.body && review.state !== "PENDING") {
+          results.push({
+            id: `review-${review.id}`,
+            kind: "comment",
+            header: `### REVIEW by @${review.user?.login || "unknown"} (${review.state})`,
+            commentBody: review.body_text || review.body || "",
+            author: review.user?.login || "unknown",
+            authorAvatarUrl: review.user?.avatar_url,
+            timestamp: review.submitted_at || new Date().toISOString(), // submitted_at can be null for pending
+          });
+        }
+      });
+    } catch (error) {
+      console.error("Failed to fetch PR reviews:", error);
+    }
+
+    // 3. Fetch review comments (comments on specific lines in the diff, forming threads)
+    try {
+      const reviewComments = await octokit.paginate(octokit.rest.pulls.listReviewComments, {
+        owner,
+        repo,
+        pull_number: number,
+        per_page: 100,
+      });
+
+      // Group comments by path and original_line to form threads
+      const threads: Record<string, PullReviewComment[]> = {};
+      reviewComments.forEach((comment: PullReviewComment) => {
+        if (!comment.path || typeof comment.original_line === 'undefined' || comment.original_line === null) return; // Skip comments not tied to a specific line/path
+        const threadKey = `${comment.path}:${comment.original_line}`;
+        if (!threads[threadKey]) {
+          threads[threadKey] = [];
+        }
+        threads[threadKey].push(comment);
+      });
+
+      for (const threadKey in threads) {
+        const commentsInThread = threads[threadKey].sort(
+          (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
+        );
+        if (commentsInThread.length > 0) {
+          const firstComment = commentsInThread[0];
+          const threadBody = commentsInThread
+            .map(c => `> _@${c.user?.login || "unknown"} · ${new Date(c.created_at).toLocaleDateString("en-CA", { year: "numeric", month: "short", day: "numeric" })}_\n\n${c.body_text || c.body || ""}`)
+            .join("\n\n---\n");
+
+          results.push({
+            id: `thread-${firstComment.path}-${firstComment.original_line}-${firstComment.id}`,
+            kind: "comment",
+            header: `### THREAD ON ${firstComment.path}:${firstComment.original_line}`,
+            commentBody: threadBody,
+            author: firstComment.user?.login || "unknown", // Author of the first comment in thread
+            authorAvatarUrl: firstComment.user?.avatar_url,
+            timestamp: firstComment.created_at,
+            filePath: firstComment.path,
+            line: firstComment.original_line,
+          });
         }
       }
+    } catch (error) {
+      console.error("Failed to fetch review comments (threads):", error);
     }
-    // Add reviews not available on this server version.
-    if (participants) {
-      discussions.push({ resolved: false, participants, numComments });
-    }
-    // Add review threads.
-    if (res.node.reviewThreads?.nodes) {
-      for (const thread of res.node.reviewThreads.nodes) {
-        if (thread && thread.comments.nodes) {
-          participants = [];
-          for (const comment of thread.comments.nodes) {
-            if (comment) {
-              this.addOrUpdateParticipant(
-                participants,
-                comment.author,
-                comment.publishedAt ?? comment.createdAt,
-              );
-            }
-          }
-          if (participants) {
-            discussions.push({
-              resolved: thread.isResolved,
-              participants,
-              numComments: thread.comments.nodes.length,
-              file: {
-                path: thread.path,
-                line: isNonNullish(thread.startLine)
-                  ? thread.startLine
-                  : isNonNullish(thread.line)
-                    ? thread.line
-                    : undefined,
-              },
-            });
-          }
-        }
-      }
-    }
+    
+    // Sort all collected blocks by timestamp
+    results.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
 
-    // Cast node to a type that includes optional headRefName and files,
-    // or use a more specific generated type if available and appropriate.
-    const prNode = res.node as typeof res.node & {
-      headRefName?: string;
-      files?: { nodes?: ({ path: string } | null)[] };
-    };
-
-    return {
-      id: prNode.id,
-      repo: `${prNode.repository.owner.login}/${prNode.repository.name}`,
-      number: prNode.number,
-      title: prNode.title,
-      body: prNode.body,
-      state: prNode.isDraft
-        ? "draft"
-        : prNode.merged
-          ? "merged"
-          : prNode.closed
-            ? "closed"
-            : hasMergeQueueEntry(prNode)
-              ? "enqueued"
-              : prNode.reviewDecision == PullRequestReviewDecision.Approved
-                ? "approved"
-                : "pending",
-      checkState: hasStatusCheckRollup(prNode)
-        ? this.toCheckState(prNode.statusCheckRollup.state)
-        : "pending",
-      queueState: undefined,
-      createdAt: this.toDate(prNode.createdAt),
-      updatedAt: this.toDate(prNode.updatedAt),
-      enqueuedAt: hasMergeQueueEntry(prNode)
-        ? this.toDate(prNode.mergeQueueEntry.enqueuedAt)
-        : undefined,
-      mergedAt: prNode.mergedAt ? this.toDate(prNode.mergedAt) : undefined,
-      closedAt: prNode.closedAt ? this.toDate(prNode.closedAt) : undefined,
-      locked: prNode.locked,
-      url: `${prNode.url}`,
-      labels:
-        prNode.labels?.nodes?.filter(isNonNullish).map((n) => n.name) ?? [],
-      additions: prNode.additions,
-      deletions: prNode.deletions,
-      author: this.makeUser(prNode.author),
-      requestedReviewers:
-        prNode.reviewRequests?.nodes
-          ?.map((n) => n?.requestedReviewer)
-          .filter(isNonNullish)
-          .filter((n) => n?.__typename != "Team")
-          .map((n) => this.makeUser(n))
-          .filter(isNonNull) ?? [],
-      requestedTeams:
-        prNode.reviewRequests?.nodes
-          ?.map((n) => n?.requestedReviewer)
-          .filter(isNonNullish)
-          .filter((n) => n.__typename == "Team")
-          .map((n) => ({ id: n.id, name: n.combinedSlug })) ?? [],
-      reviews: hasLatestOpinionatedReviews(prNode)
-        ? (() => {
-            type Latest = NonNullable<
-              NonNullable<
-                (typeof prNode.latestOpinionatedReviews)["nodes"]
-              >[number]
-            >;
-            return (
-              prNode.latestOpinionatedReviews.nodes
-                ?.filter(isNonNullish)
-                .filter(
-                  (n: Latest) =>
-                    n.state !== PullRequestReviewState.Dismissed &&
+    return results;
+  }
                     n.state !== PullRequestReviewState.Pending,
                 )
                 .map((n: Latest) => ({

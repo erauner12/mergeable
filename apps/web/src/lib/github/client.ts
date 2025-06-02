@@ -6,18 +6,6 @@ import {
   CheckConclusionState,
   PullRequestReviewDecision,
   PullRequestReviewState,
-  SearchDocument,
-  SearchFullDocument,
-  StatusState,
-  type Actor as GqlActor, // Renamed import to GqlActor
-  type CheckRun,
-  type SearchFullQuery,
-  type SearchQuery,
-  type StatusContext,
-  // Types for PR node in makePull
-  type SearchQueryVariables, // For SearchResultItem
-  type SearchResultItemEdge,
-
 } from "../../../generated/gql/graphql";
 import { prepareQuery } from "./search";
 import {
@@ -36,13 +24,14 @@ import type {
   Team,
   User,
 } from "./types";
+import type { Actor } from "./type-guards"; // ADDED
 import type { CommentBlockInput } from "../repoprompt"; // Import CommentBlockInput
 
 // Type aliases for Octokit responses
-type IssueComment = Endpoints["GET /repos/{owner}/{repo}/issues/{issue_number}/comments"]["response"]["data"][number];
-type PullReview = Endpoints["GET /repos/{owner}/{repo}/pulls/{pull_number}/reviews"]["response"]["data"][number];
-type PullReviewComment = Endpoints["GET /repos/{owner}/{repo}/pulls/{pull_number}/comments"]["response"]["data"][number];
-type UserTeam = Endpoints["GET /user/teams"]["response"]["data"][number]; // Type for team obj
+type _IssueComment = Endpoints["GET /repos/{owner}/{repo}/issues/{issue_number}/comments"]["response"]["data"][number]; // MODIFIED: added _
+type _PullReview = Endpoints["GET /repos/{owner}/{repo}/pulls/{pull_number}/reviews"]["response"]["data"][number]; // MODIFIED: added _
+type _PullReviewComment = Endpoints["GET /repos/{owner}/{repo}/pulls/{pull_number}/comments"]["response"]["data"][number]; // MODIFIED: added _
+type _UserTeam = Endpoints["GET /user/teams"]["response"]["data"][number]; // MODIFIED: added _ // Type for team obj
 
 // single commit item returned by pulls.listCommits
 export type PullRequestCommit = Endpoints["GET /repos/{owner}/{repo}/pulls/{pull_number}/commits"]["response"]["data"][number];
@@ -99,55 +88,64 @@ export async function getPullRequestDiff(
   return data; // `data` is already the diff string
 }
 
-export type { Endpoint }; // Re-export Endpoint
-
 export class DefaultGitHubClient implements GitHubClient {
   private octokits: Record<string, Octokit> = {};
   private commentCache: Map<string, Promise<CommentBlockInput[]>> = new Map(); // Add commentCache definition
 
+  private getOctokit(endpoint: Endpoint): Octokit { // ADDED METHOD
+    if (!this.octokits[endpoint.auth]) {
+      this.octokits[endpoint.auth] = new MyOctokit({ // Use MyOctokit to include throttling
+        auth: endpoint.auth,
+        baseUrl: endpoint.baseUrl,
+        // throttle options will be taken from MyOctokit defaults
+      });
+    }
+    return this.octokits[endpoint.auth];
+  }
+
   async getViewer(endpoint: Endpoint): Promise<Profile> {
-    const octokit = this.getOctokit(endpoint);
+    const octokit = this.getOctokit(endpoint); // MODIFIED: use helper
     const userResponse = await octokit.rest.users.getAuthenticated();
     const user: User = {
       id: userResponse.data.node_id,
       name: userResponse.data.login,
       avatarUrl: userResponse.data.avatar_url,
-      bot: false,
-    };
-    const teamsResponse = await octokit.paginate("GET /user/teams", {
-      per_page: 100,
-    });
-    const teams: Team[] = teamsResponse.map((obj) => ({
-      id: obj.node_id,
-      name: `${obj.organization.login}/${obj.slug}`,
-    }));
-    return { user, teams };
-  }
+    bot: false,
+  };
+  const teamsResponse = await octokit.paginate("GET /user/teams", { // octokit is already from getOctokit
+    per_page: 100,
+  });
+  const teams: Team[] = teamsResponse.map((obj: Endpoints["GET /user/teams"]["response"]["data"][number]) => ({ // MODIFIED: added type for obj
+    id: obj.node_id,
+    name: `${obj.organization.login}/${obj.slug}`,
+  }));
+  return { user, teams };
+}
 
-  async searchPulls(
-    endpoint: Endpoint,
-    search: string,
-    orgs: string[],
-    limit: number,
-  ): Promise<PullProps[]> {
-    const q = prepareQuery(search, orgs);
-    const useFull = Boolean(import.meta.env.MERGEABLE_EXTENDED_SEARCH);
-    const query = useFull
-      ? (SearchFullDocument.toString() as string)
-      : (SearchDocument.toString() as string);
+async searchPulls(
+  endpoint: Endpoint,
+  search: string,
+  orgs: string[],
+  limit: number,
+): Promise<PullProps[]> {
+  const q = prepareQuery(search, orgs);
+  const useFull = Boolean(import.meta.env.MERGEABLE_EXTENDED_SEARCH);
+  const query = useFull
+    ? (SearchFullDocument.toString() as string)
+    : (SearchDocument.toString() as string);
 
-    const octokit = this.getOctokit(endpoint);
-    const data = await octokit.graphql<SearchQuery | SearchFullQuery>(query, {
-      q,
-      limit,
-    });
-    return (
-      data.search.edges
-        ?.filter(isNonNull)
-        .map((n) => this.makePull(n))
-        .filter(isNonNull) ?? []
-    );
-  }
+  const octokit = this.getOctokit(endpoint); // MODIFIED: use helper
+  const data = await octokit.graphql<SearchQuery | SearchFullQuery>(query, {
+    q,
+    limit,
+  });
+  return (
+    data.search.edges
+      ?.filter(isNonNull)
+      .map((n) => this.makePull(n))
+      .filter(isNonNull) ?? []
+  );
+}
 
   // New method: fetchPullComments
   async fetchPullComments(
@@ -174,9 +172,9 @@ export class DefaultGitHubClient implements GitHubClient {
     repo: string,
     number: number,
   ): Promise<CommentBlockInput[]> {
-    const octokit = this.getOctokit(endpoint);
+    const octokit = this.getOctokit(endpoint); // MODIFIED: use helper
     const results: CommentBlockInput[] = [];
-
+  
     // 1. Fetch issue comments (general comments on the PR)
     try {
       const issueComments = await octokit.paginate(octokit.rest.issues.listComments, {
@@ -282,20 +280,19 @@ export class DefaultGitHubClient implements GitHubClient {
   }
 
   private makePull(prNode: any): PullProps {
-    const discussions: Discussion[] = [];
+    const discussions: Discussion[] = []; // This now uses the updated Discussion type from types.ts
     const participants: Participant[] = [];
 
     for (const node of prNode.comments?.nodes ?? []) {
       if (!node) continue;
       this.addOrUpdateParticipant(participants, node.author, node.createdAt);
-      discussions.push({
+      discussions.push({ // This object structure should now match the new Discussion type
         id: node.id,
         author: this.makeUser(node.author),
         createdAt: this.toDate(node.createdAt),
         body: node.bodyText,
         isResolved: node.isResolved ?? false,
         url: node.url,
-        // TODO: reactions
       });
     }
 

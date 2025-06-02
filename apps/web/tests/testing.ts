@@ -1,6 +1,7 @@
 import type { Endpoint, GitHubClient } from "../src/lib/github/client";
 import type { Profile, Pull, PullProps } from "../src/lib/github/types";
 import type { Connection, Section } from "../src/lib/types";
+import type { CommentBlockInput } from "../src/lib/repoprompt"; // ADDED
 
 export function mockPull(props?: Omit<Partial<Pull>, "uid">): Pull {
   const id = props?.id ?? "PR_1";
@@ -90,6 +91,16 @@ export class TestGitHubClient implements GitHubClient {
       this.pullsBySearch[`${endpoint.baseUrl}:${endpoint.auth}:${search}`] ||
       [];
     return Promise.resolve(pulls);
+  }
+
+  // ADDED fetchPullComments method
+  async fetchPullComments(
+    _endpoint: Endpoint,
+    _owner: string,
+    _repo: string,
+    _number: number,
+  ): Promise<CommentBlockInput[]> {
+    return Promise.resolve([]); // Return empty array as per plan
   }
 
   setPullsBySearch(endpoint: Endpoint, search: string, pulls: PullProps[]) {

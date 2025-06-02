@@ -7,13 +7,10 @@ import {
   buildRepoPromptUrl,
   logRepoPromptCall,
   type ResolvedPullMeta,
-  type PromptBlock, // New import
-  type CommentBlockInput, // New import
-  type DiffBlockInput, // New import
+  type CommentBlockInput, // Keep if needed for explicit typing of mockComments, otherwise remove
 } from "../../src/lib/repoprompt";
 import * as settings from "../../src/lib/settings";
 // Assuming mockPull is imported from a shared testing utility like "../testing"
-// If it's defined locally, ensure its signature matches the usage.
 import { mockPull } from "../testing";
 
 // Mock logRepoPromptCall as it's now called by buildRepoPromptText or PullRow
@@ -188,10 +185,10 @@ describe("buildRepoPromptText", () => {
 
   it("should include comments if specified", async () => {
     const pull = mockPull({ number: 123, repo: "owner/myrepo", branch: "feature-branch", files: [] });
-    const mockComments: CommentBlockInput[] = [
+    const mockCommentsData: CommentBlockInput[] = [ // Explicitly type if needed, or ensure structure matches
       { id: "c1", kind: "comment", header: "### COMMENT 1", commentBody: "Body 1", author: "author1", timestamp: "2024-01-01T00:00:00Z" },
     ];
-    mockFetchPullComments.mockResolvedValue(mockComments);
+    mockFetchPullComments.mockResolvedValue(mockCommentsData);
     const endpoint = { auth: "token", baseUrl: "url" };
 
     const { blocks } = await buildRepoPromptText(
@@ -203,9 +200,10 @@ describe("buildRepoPromptText", () => {
 
     expect(mockFetchPullComments).toHaveBeenCalledWith(endpoint, "owner", "myrepo", 123);
     // PR Details + Comment1
-    expect(blocks.find(b => b.id === "c1")).toBeDefined();
-    const commentBlock = blocks.find(b => b.id === "c1") as CommentBlockInput;
-    expect(commentBlock.header).toBe("### COMMENT 1");
+    const commentBlock = blocks.find(b => b.id === "c1");
+    expect(commentBlock).toBeDefined();
+    // If CommentBlockInput is imported and used for mockCommentsData, this cast is safer:
+    expect((commentBlock as CommentBlockInput).header).toBe("### COMMENT 1");
   });
 
 
@@ -230,7 +228,7 @@ describe("buildRepoPromptText", () => {
       undefined,
     );
     expect(blocks.length).toBe(2); // PR Details + PR Diff
-    const diffBlock = blocks.find(b => b.kind === "diff") as DiffBlockInput;
+    const diffBlock = blocks.find(b => b.kind === "diff");
     expect(diffBlock).toBeDefined();
     expect(diffBlock.id).toContain("diff-pr");
     expect(diffBlock.header).toBe("### FULL PR DIFF");
@@ -288,7 +286,7 @@ describe("buildRepoPromptText", () => {
       mockResolvedMeta,
     );
     
-    const diffBlock = blocks.find(b => b.id === `diff-last-commit-${mockLastCommit.sha}`) as DiffBlockInput;
+    const diffBlock = blocks.find(b => b.id === `diff-last-commit-${mockLastCommit.sha}`);
     expect(diffBlock).toBeDefined();
     expect(diffBlock.header).toContain('### LAST COMMIT (lastsha — "Last commit title")');
     expect(diffBlock.patch).toBe("diff for lastsha1");
@@ -318,12 +316,12 @@ describe("buildRepoPromptText", () => {
       mockResolvedMeta,
     );
 
-    const diffBlock1 = blocks.find(b => b.id === `diff-commit-specsha1`) as DiffBlockInput;
+    const diffBlock1 = blocks.find(b => b.id === `diff-commit-specsha1`);
     expect(diffBlock1).toBeDefined();
     expect(diffBlock1.header).toContain('### COMMIT (specsha — "Specific commit ONE")');
     expect(diffBlock1.patch).toBe("diff for specsha1");
 
-    const diffBlock2 = blocks.find(b => b.id === `diff-commit-specsha2`) as DiffBlockInput;
+    const diffBlock2 = blocks.find(b => b.id === `diff-commit-specsha2`);
     expect(diffBlock2).toBeDefined();
     expect(diffBlock2.header).toContain('### COMMIT (specsha — "Specific commit TWO")');
     expect(diffBlock2.patch).toBe("diff for specsha2");

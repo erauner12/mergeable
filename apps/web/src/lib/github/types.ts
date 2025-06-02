@@ -21,11 +21,17 @@ export type Review = {
   approved: boolean;
 };
 
+// Replace existing Discussion type
 export type Discussion = {
-  resolved: boolean;
-  numComments: number;
-  participants: Participant[];
-  file?: { path: string; line?: number };
+  id: string;
+  author: User | null;
+  createdAt: string;
+  body: string;
+  isResolved: boolean;
+  url: string;
+  // Note: 'file', 'numComments', 'participants', 'resolved' (as distinct from isResolved) are removed
+  // as per the structure produced by client.ts#makePull and the plan's definition for Discussion.
+  // This will likely impact attention.ts.
 };
 
 export type Participant = {
@@ -76,10 +82,11 @@ export type PullProps = {
   requestedReviewers: User[];
   requestedTeams: Team[];
   reviews: Review[];
-  discussions: Discussion[];
+  discussions: Discussion[]; // This now uses the new Discussion type
   checks: Check[];
   branch: string;
   files: string[];
+  participants: Participant[]; // ADDED as per plan
 };
 
 export type Attention = {

@@ -1,6 +1,6 @@
 import {
   Button,
-  Checkbox, // New import
+  Checkbox,
   Classes,
   Collapse,
   Dialog,
@@ -13,8 +13,9 @@ import {
   ButtonGroup,
 } from "@blueprintjs/core";
 import { IconNames } from "@blueprintjs/icons";
-import React, { useState, useEffect, useMemo } from "react"; // Added useEffect, useMemo
-import type { PromptBlock, DiffBlockInput, CommentBlockInput, DiffOptions } from "../lib/repoprompt"; // Updated imports
+// import React, { useState, useEffect, useMemo } from "react"; // REMOVED React default import
+import { useState, useEffect, useMemo } from "react"; // ADDED (React default import removed)
+import type { PromptBlock } from "../lib/repoprompt"; // REMOVED DiffBlockInput, CommentBlockInput, DiffOptions
 import { formatPromptBlock } from "../lib/repoprompt"; // Import formatter
 import styles from "./PromptCopyDialog.module.scss";
 
@@ -45,8 +46,8 @@ async function copyTextToClipboard(text: string): Promise<boolean> {
 
 interface PromptCopyDialogProps {
   isOpen: boolean;
-  initialPromptText: string; // Full prompt of initially selected items
-  blocks: PromptBlock[]; // All available blocks
+  _initialPromptText: string; // MODIFIED: Renamed from initialPromptText
+  blocks: PromptBlock[];
   initialSelectedBlockIds?: Set<string>; // IDs of blocks initially selected by DiffPickerDialog choices
   onClose: () => void;
   prTitle?: string;
@@ -61,7 +62,7 @@ interface CopyState {
 
 export function PromptCopyDialog({
   isOpen,
-  initialPromptText, // Renamed from promptText
+  _initialPromptText, // MODIFIED: Renamed from initialPromptText
   blocks,
   initialSelectedBlockIds,
   onClose,

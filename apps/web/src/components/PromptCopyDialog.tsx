@@ -8,8 +8,10 @@ import {
   DialogBody,
   DialogFooter,
   H5,
+  H6,
   Icon,
   Intent,
+  TextArea,
   Tooltip,
 } from "@blueprintjs/core";
 import { IconNames } from "@blueprintjs/icons";
@@ -52,7 +54,7 @@ interface PromptCopyDialogProps {
   onClose: () => void;
   prTitle?: string;
   repoPromptUrl?: string;
-  onOpenRepoPrompt?: (selectedText: string) => void; // Passes currently selected text
+  onOpenRepoPrompt?: (fullPrompt: string) => void; // MODIFIED: Passes full prompt text
 }
 
 interface CopyState {
@@ -154,6 +156,14 @@ export function PromptCopyDialog({
       .join("\n")
       .trimEnd();
   }, [blocks, selectedIds]);
+
+  const getFinalPrompt = (): string => {
+    const selection = currentSelectedText.trimEnd(); // currentSelectedText is from useMemo above
+    const extra = userText.trim();
+    return selection + (extra ? `\n\n${extra}` : "");
+  };
+
+  const nothingToSend = selectedIds.size === 0 && userText.trim() === "";
 
   const renderBlockContent = (block: PromptBlock) => {
     if (block.kind === "diff") {
@@ -298,6 +308,16 @@ export function PromptCopyDialog({
           })}
         </div>
         {/* ADDED Composer TextArea */}
+        <H6 className={styles.composerLabel} id="prompt-composer-label">Your instructions (optional)</H6>
+        <TextArea
+          className={styles.composerInput}
+          fill
+          rows={4}
+          value={userText}
+          onChange={e => setUserText(e.target.value)}
+          id="prompt-composer-input"
+          aria-labelledby="prompt-composer-label"
+        />
       </DialogBody>
       <DialogFooter
         actions={
@@ -313,8 +333,8 @@ export function PromptCopyDialog({
                   ? "Copied!"
                   : "Copy Selected"
               }
-              onClick={() => handleCopy(currentSelectedText, "all_selected")}
-              disabled={selectedIds.size === 0} // Disable if nothing selected
+              onClick={() => handleCopy(getFinalPrompt(), "all_selected")}
+              disabled={nothingToSend}
               rightIcon={
                 copyStatus?.id === "all_selected" && !copyStatus.copied ? (
                   <Tooltip
@@ -330,11 +350,11 @@ export function PromptCopyDialog({
             <Button
               intent={Intent.PRIMARY}
               icon={IconNames.APPLICATION}
-              disabled={!repoPromptUrl}
+              disabled={!repoPromptUrl || nothingToSend}
               onClick={() => {
                 if (repoPromptUrl) {
                   window.open(repoPromptUrl, "_blank");
-                  onOpenRepoPrompt?.(currentSelectedText); // Pass current selected text
+                  onOpenRepoPrompt?.(getFinalPrompt());
                 }
               }}
               text="Open in RepoPrompt"

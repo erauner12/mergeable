@@ -46,6 +46,10 @@ const MyOctokit = Octokit.plugin(throttling);
 export type PullRequestCommit =
   Endpoints["GET /repos/{owner}/{repo}/pulls/{pull_number}/commits"]["response"]["data"][number];
 
+// Type for individual review comments from the list endpoint
+type ReviewCommentItem =
+  Endpoints["GET /repos/{owner}/{repo}/pulls/{pull_number}/comments"]["response"]["data"][number];
+
 export type Endpoint = {
   auth: string;
   baseUrl: string;
@@ -289,7 +293,7 @@ export class DefaultGitHubClient implements GitHubClient {
     }
 
     // Helper: get thread key for a review comment
-    function getThreadKey(rc: any): string {
+    function getThreadKey(rc: ReviewCommentItem): string {
       // Use pull_request_review_id as the primary key for threading.
       // If null (e.g. outdated comment, or single comment not part of a review),
       // use the comment's own ID to treat it as a distinct "thread".
@@ -329,7 +333,7 @@ export class DefaultGitHubClient implements GitHubClient {
       // Note: Standard GitHub REST API for a single comment does not provide 'is_resolved'.
       // This implementation follows the user's plan, assuming this call yields resolution status.
       let resolved = false; // Default to unresolved
-      const commentIdForThreadMeta = parseInt(headComment.id); // API expects number
+      const commentIdForThreadMeta = headComment.id; // API expects number, headComment.id is already a number
 
       // Use threadKey for caching resolution as it represents the group.
       // headComment.id should be stable for a given threadKey.

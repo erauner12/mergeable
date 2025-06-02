@@ -6,7 +6,7 @@ import {
   buildRepoPromptText,
   buildRepoPromptUrl,
   type ResolvedPullMeta,
-  type CommentBlockInput, // Keep if needed for explicit typing of mockComments, otherwise remove
+  type CommentBlockInput,
 } from "../../src/lib/repoprompt";
 import * as repopromptModule from "../../src/lib/repoprompt"; // ADDED: Namespace import
 import { isDiffBlock } from "../../src/lib/repoprompt.guards";
@@ -194,27 +194,63 @@ describe("buildRepoPromptText", () => {
     expect(logRepoPromptCallSpy).not.toHaveBeenCalled(); // UPDATED: Use spy
   });
 
-  it("should include comments if specified", async () => {
+  it("should include comments if specified, potentially as threads", async () => {
     const pull = mockPull({ number: 123, repo: "owner/myrepo", branch: "feature-branch", files: [] });
-    const mockCommentsData: CommentBlockInput[] = [ // Explicitly type if needed, or ensure structure matches
-      { id: "c1", kind: "comment", header: "### COMMENT 1", commentBody: "Body 1", author: "author1", timestamp: "2024-01-01T00:00:00Z" },
+    // This mock data now represents what fetchPullComments would return:
+    // already processed blocks, some of which could be threads.
+    const mockCommentBlocks: CommentBlockInput[] = [
+      {
+        id: "thread-1-comment-abc", kind: "comment",
+        header: "### THREAD ON src/file.ts#L10 (1 comment)",
+        commentBody: "> _@author1 · Jan 01, 2024 00:00 UTC_\n\nBody 1", // Formatted by makeThreadBlock
+        author: "author1", timestamp: "2024-01-01T00:00:00Z",
+        threadId: "review-thread-1", diffHunk: "@@ -1,1 +1,1 @@\n-old line\n+new line",
+        filePath: "src/file.ts", line: 10,
+      },
+      {
+        id: "issue-2", kind: "comment",
+        header: "### ISSUE COMMENT by @author2",
+        commentBody: "Just a top-level comment.",
+        author: "author2", timestamp: "2024-01-02T00:00:00Z",
+        // No threadId or diffHunk for simple issue comments
+      }
     ];
-    mockFetchPullComments.mockResolvedValue(mockCommentsData);
+    mockFetchPullComments.mockResolvedValue(mockCommentBlocks);
     const endpoint = { auth: "token", baseUrl: "url" };
 
-    const { blocks } = await buildRepoPromptText(
+    const { blocks, promptText } = await buildRepoPromptText(
       pull,
-      { includeComments: true },
+      { includeComments: true }, // Comments are not initially selected for promptText by default
       endpoint,
       mockResolvedMeta,
     );
 
     expect(mockFetchPullComments).toHaveBeenCalledWith(endpoint, "owner", "myrepo", 123);
-    // PR Details + Comment1
-    const commentBlock = blocks.find(b => b.id === "c1");
-    expect(commentBlock).toBeDefined();
-    // If CommentBlockInput is imported and used for mockCommentsData, this cast is safer:
-    expect((commentBlock as CommentBlockInput).header).toBe("### COMMENT 1");
+    expect(blocks.length).toBe(1 + mockCommentBlocks.length); // PR Details + mocked comment blocks
+
+    const threadBlock = blocks.find(b => b.id === "thread-1-comment-abc");
+    expect(threadBlock).toBeDefined();
+    expect(threadBlock?.kind).toBe("comment");
+    if (threadBlock?.kind === "comment") {
+      expect(threadBlock.header).toBe("### THREAD ON src/file.ts#L10 (1 comment)");
+      expect(threadBlock.diffHunk).toBe("@@ -1,1 +1,1 @@\n-old line\n+new line");
+      expect(threadBlock.commentBody).toContain("> _@author1"); // Check for formatted body
+    }
+    
+    const issueBlock = blocks.find(b => b.id === "issue-2");
+    expect(issueBlock).toBeDefined();
+    if (issueBlock?.kind === "comment") {
+      expect(issueBlock.header).toBe("### ISSUE COMMENT by @author2");
+      expect(issueBlock.diffHunk).toBeUndefined();
+    }
+
+    // Comments are not initially selected for promptText by default, so promptText shouldn't contain them
+    // unless specifically handled by initial selection logic (which is not the case here).
+    // The PR details block IS initially selected.
+    expect(promptText).toContain("### PR #123 DETAILS");
+    expect(promptText).not.toContain("### THREAD ON src/file.ts#L10");
+    expect(promptText).not.toContain("@@ -1,1 +1,1 @@");
+    expect(promptText).not.toContain("### ISSUE COMMENT by @author2");
   });
 
 
@@ -256,27 +292,34 @@ describe("buildRepoPromptText", () => {
     expect(promptText).toContain("dummy pr diff content");
   });
 
-  it("should correctly order PR details, comments, and diff blocks", async () => {
+  it("should correctly order PR details, comments (including threads), and diff blocks in the 'allPromptBlocks' array", async () => {
     const pull = mockPull({ number: 789, repo: "owner/myrepo", branch: "feature-branch", files: [] });
-    const mockComment: CommentBlockInput = {
-      id: "comment-1", kind: "comment", header: "### A COMMENT", commentBody: "Comment body",
-      author: "commenter", timestamp: "2024-01-02T00:00:00Z"
+    const mockThreadBlock: CommentBlockInput = {
+      id: "thread-1-comment-xyz", kind: "comment",
+      header: "### THREAD ON main.py#L5 (1 comment)",
+      commentBody: "> _@commenter · Jan 02, 2024 00:00 UTC_\n\nComment body",
+      author: "commenter", timestamp: "2024-01-02T00:00:00Z",
+      threadId: "review-thread-for-ordering", diffHunk: "diff hunk content",
+      filePath: "main.py", line: 5,
     };
-    mockFetchPullComments.mockResolvedValue([mockComment]);
+    mockFetchPullComments.mockResolvedValue([mockThreadBlock]);
     vi.spyOn(gh, "getPullRequestDiff").mockResolvedValue("PR DIFF CONTENT");
     const endpoint = { auth: "token", baseUrl: "url" };
 
     const { blocks } = await buildRepoPromptText(
       pull,
+      // includeComments: true means they are fetched and added to `allPromptBlocks`
+      // includePr: true means PR diff is fetched and added to `allPromptBlocks` and `initiallySelectedBlocks`
       { includeComments: true, includePr: true },
       endpoint,
       mockResolvedMeta
     );
 
-    expect(blocks.length).toBe(3); // PR Details, Comment, PR Diff
-    expect(blocks[0].id).toContain("pr-details");
-    expect(blocks[1].id).toBe("comment-1");
-    expect(blocks[2].id).toContain("diff-pr");
+    // Order in allPromptBlocks: PR Details, then Comments, then Diffs
+    expect(blocks.length).toBe(3); // PR Details, Comment Thread, PR Diff
+    expect(blocks[0].id).toContain("pr-details"); // PR Details always first
+    expect(blocks[1].id).toBe("thread-1-comment-xyz"); // Then comments
+    expect(blocks[2].id).toContain("diff-pr"); // Then diffs
   });
 
 // ... (keep and adapt other diff-related tests, ensuring they check for block.kind === 'diff' and correct IDs) ...

@@ -20,6 +20,7 @@ import {
   type StatusContext,
 } from "../../../generated/gql/graphql";
 import type { CommentBlockInput } from "../repoprompt";
+import { makeThreadBlock, type IndividualCommentData } from "./commentThreads"; // ADDED IMPORT
 import { prepareQuery } from "./search";
 import type { Actor, PullRequestNode } from "./type-guards";
 import {
@@ -200,7 +201,7 @@ export class DefaultGitHubClient implements GitHubClient {
     const octokit = this.getOctokit(endpoint);
 
     // Fetch issue comments
-    const issueComments = await octokit.paginate(
+    const issueCommentsResponse = await octokit.paginate( // Renamed for clarity
       octokit.rest.issues.listComments,
       {
         owner,
@@ -211,7 +212,7 @@ export class DefaultGitHubClient implements GitHubClient {
     );
 
     // Fetch pull request reviews
-    const reviews = await octokit.paginate(octokit.rest.pulls.listReviews, {
+    const reviewsResponse = await octokit.paginate(octokit.rest.pulls.listReviews, { // Renamed for clarity
       owner,
       repo,
       pull_number: number,
@@ -219,7 +220,7 @@ export class DefaultGitHubClient implements GitHubClient {
     });
 
     // Fetch pull request review comments
-    const reviewComments = await octokit.paginate(
+    const reviewCommentsResponse = await octokit.paginate( // Renamed for clarity
       octokit.rest.pulls.listReviewComments,
       {
         owner,
@@ -230,61 +231,110 @@ export class DefaultGitHubClient implements GitHubClient {
     );
 
     // Normalize all comments into CommentBlockInput[]
-    const commentBlocks: CommentBlockInput[] = [];
+    const allCommentBlocks: CommentBlockInput[] = [];
 
-    // Issue comments
-    for (const c of issueComments) {
-      commentBlocks.push({
-        id: c.id.toString(),
+    // 1. Issue comments (top-level PR comments)
+    for (const c of issueCommentsResponse) {
+      allCommentBlocks.push({
+        id: `issue-${c.id.toString()}`, // Ensure unique ID namespace
         kind: "comment",
         header: `### ISSUE COMMENT by @${c.user?.login ?? "unknown"}`,
         commentBody: c.body ?? "",
         author: c.user?.login ?? "unknown",
         authorAvatarUrl: c.user?.avatar_url,
         timestamp: c.created_at,
-        // filePath and line are not applicable to issue comments directly
+        // threadId, diffHunk, filePath, line are undefined for plain issue comments
       });
     }
 
-    // Review comments (top-level)
-    for (const rc of reviewComments) {
-      commentBlocks.push({
-        id: rc.id.toString(),
-        kind: "comment",
-        header: `### REVIEW COMMENT ON ${rc.path}#L${rc.line} by @${rc.user?.login ?? "unknown"}`,
-        commentBody: rc.body ?? "",
-        author: rc.user?.login ?? "unknown",
-        authorAvatarUrl: rc.user?.avatar_url,
-        timestamp: rc.created_at,
-        filePath: rc.path,
-        line: rc.line, // or rc.original_line if that's the correct field
-      });
-    }
-
-    // Reviews (summary, not inline comments)
-    for (const r of reviews) {
-      if (r.body) {
-        // Only include reviews that have a body text
-        commentBlocks.push({
-          id: r.id.toString(),
+    // 2. Reviews (summary comments)
+    for (const r of reviewsResponse) {
+      if (r.body && r.submitted_at) { // Only include reviews that have a body text and a submission timestamp
+        allCommentBlocks.push({
+          id: `review-${r.id.toString()}`, // Ensure unique ID namespace
           kind: "comment",
           header: `### REVIEW by @${r.user?.login ?? "unknown"} (${r.state})`,
           commentBody: r.body,
           author: r.user?.login ?? "unknown",
-          authorAvatarUrl: r.user?.avatar_url,
-          timestamp: r.submitted_at ?? "", // Ensure a valid date string
-          // filePath and line are not applicable to review summaries
+          authorAvatarUrl: r.user?.avatar_url, // Corrected from c.user to r.user
+          timestamp: r.submitted_at, // Now guaranteed to be a string, no incorrect fallback
+          // threadId, diffHunk, filePath, line are undefined for review summaries
         });
       }
     }
 
-    // Sort by createdAt ascending
-    commentBlocks.sort(
+    // 3. Pull request review comments (comments on diffs / threads)
+    // Group review comments by thread
+    const threads = new Map<string, {
+        path: string;
+        line: number; // Line in the diff to which the thread pertains
+        diffHunk?: string;
+        commentsData: IndividualCommentData[];
+    }>();
+
+    for (const rc of reviewCommentsResponse) {
+      if (!rc.user) continue; // Should ideally not happen
+
+      // Use pull_request_review_id as the primary key for threading.
+      // If null (e.g. outdated comment, or single comment not part of a review),
+      // use the comment's own ID to treat it as a distinct "thread".
+      // Prefix with "comment-" to avoid collision if rc.id could be same as a review_id.
+      const threadKey = rc.pull_request_review_id ? String(rc.pull_request_review_id) : `comment-${rc.id}`;
+      
+      let threadData = threads.get(threadKey);
+      if (!threadData) {
+        threadData = {
+          path: rc.path,
+          // `line` is the line in the diff. `original_line` is in the file.
+          // For header "THREAD ON path#L<line>", `line` (in diff) is appropriate with `diff_hunk`.
+          line: rc.line ?? (rc.original_line ?? 0), // Fallback for line
+          diffHunk: rc.diff_hunk ?? undefined,
+          commentsData: [],
+        };
+        threads.set(threadKey, threadData);
+      }
+
+      // In case the first comment didn't have a diff_hunk but a subsequent one in the same thread does.
+      // This assumes diff_hunk is consistent or the first one is representative.
+      if (!threadData.diffHunk && rc.diff_hunk) {
+        threadData.diffHunk = rc.diff_hunk;
+      }
+      // If path or line differs for comments supposedly in the same thread_id, take the first one.
+      // This shouldn't happen for well-formed threads.
+
+      threadData.commentsData.push({
+        id: rc.id.toString(),
+        commentBody: rc.body ?? "",
+        author: rc.user.login,
+        authorAvatarUrl: rc.user.avatar_url,
+        timestamp: rc.created_at,
+      });
+    }
+
+    // Process grouped threads
+    for (const [threadKey, data] of threads.entries()) {
+      if (data.commentsData.length === 0) continue; // Skip if a thread somehow ended up empty
+
+      // Sort comments within the thread by timestamp (chronological)
+      data.commentsData.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+      
+      const threadBlock = makeThreadBlock(
+        threadKey,
+        data.path,
+        data.line,
+        data.diffHunk,
+        data.commentsData
+      );
+      allCommentBlocks.push(threadBlock);
+    }
+    
+    // Sort all blocks (issue comments, review summaries, thread blocks) by their primary timestamp
+    allCommentBlocks.sort(
       (a, b) =>
         new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
     );
 
-    return commentBlocks;
+    return allCommentBlocks;
   }
 
   private makePull(prNode: PullRequestNode): PullProps {

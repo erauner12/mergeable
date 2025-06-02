@@ -46,6 +46,10 @@ export function isInAttentionSet(viewer: Profile, pull: PullProps): Attention {
     return typeof d.filePath === 'string' && d.filePath.length > 0;
   }
 
+  // 🔍 add helper just above the main loop
+  const hasOtherParticipants = pull.participants
+    .some(p => p.user.id !== viewer.user.id);
+
   let unreadDiscussions = 0;
   let unresolvedDiscussions = 0;
   for (const discussion of pull.discussions) {
@@ -109,7 +113,11 @@ export function isInAttentionSet(viewer: Profile, pull: PullProps): Attention {
       set: true,
       reason: `${unreadDiscussions} unread discussion${unreadDiscussions > 1 ? "s" : ""}`,
     };
-  } else if ((isAuthor || isReviewer) && unresolvedDiscussions > 0) {
+  } else if (
+    (isAuthor || isReviewer) &&
+    unresolvedDiscussions > 0 &&
+    hasOtherParticipants // ← NEW guard
+  ) {
     return {
       set: true,
       reason: `${unresolvedDiscussions} unresolved discussion${unresolvedDiscussions > 1 ? "s" : ""}`,

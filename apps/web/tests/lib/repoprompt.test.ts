@@ -30,10 +30,12 @@ vi.mock("../../src/lib/repoprompt", async (importOriginal) => {
 });
 
 // Mock fetchPullComments
-const mockFetchPullComments = vi.fn();
+// const mockFetchPullComments = vi.fn(); // OLD: Causes TDZ
+let mockFetchPullComments: ReturnType<typeof vi.fn>; // NEW: Declare with let
 
 vi.mock("../../src/lib/github/client", async (importOriginal) => {
   const originalClient = await importOriginal<typeof import("../../src/lib/github/client")>();
+  mockFetchPullComments = vi.fn(); // NEW: Initialize inside the factory
   return {
     ...originalClient,
     fetchPullComments: mockFetchPullComments, // Mock the new function

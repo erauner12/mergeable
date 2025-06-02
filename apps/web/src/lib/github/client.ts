@@ -30,6 +30,15 @@ import type {
   User,
 } from "./types";
 import type { Actor } from "./type-guards";
+import {
+  PullRequestNode,
+  isPullRequestNode,
+  hasComments,
+  hasFiles,
+  hasLatestOpinionatedReviews,
+  hasMergeQueueEntry,
+  hasStatusCheckRollup,
+} from "./type-guards";
 import type { CommentBlockInput } from "../repoprompt";
 const MyOctokit = Octokit.plugin(throttling);
 
@@ -215,16 +224,13 @@ export class DefaultGitHubClient implements GitHubClient {
     for (const c of issueComments) {
       commentBlocks.push({
         id: c.id.toString(),
-        author: {
-          id: c.user?.node_id ?? "",
-          name: c.user?.login ?? "",
-          avatarUrl: c.user?.avatar_url ?? "",
-          bot: !!c.user?.type && c.user.type === "Bot",
-        },
-        createdAt: c.created_at,
-        body: c.body ?? "",
-        url: c.html_url,
-        type: "ISSUE_COMMENT",
+        kind: "comment",
+        header: `### ISSUE COMMENT by @${c.user?.login ?? "unknown"}`,
+        commentBody: c.body ?? "",
+        author: c.user?.login ?? "unknown",
+        authorAvatarUrl: c.user?.avatar_url,
+        timestamp: c.created_at,
+        // filePath and line are not applicable to issue comments directly
       });
     }
 
@@ -232,40 +238,35 @@ export class DefaultGitHubClient implements GitHubClient {
     for (const rc of reviewComments) {
       commentBlocks.push({
         id: rc.id.toString(),
-        author: {
-          id: rc.user?.node_id ?? "",
-          name: rc.user?.login ?? "",
-          avatarUrl: rc.user?.avatar_url ?? "",
-          bot: !!rc.user?.type && rc.user.type === "Bot",
-        },
-        createdAt: rc.created_at,
-        body: rc.body ?? "",
-        url: rc.html_url,
-        type: "REVIEW_COMMENT",
+        kind: "comment",
+        header: `### REVIEW COMMENT ON ${rc.path}#L${rc.line} by @${rc.user?.login ?? "unknown"}`,
+        commentBody: rc.body ?? "",
+        author: rc.user?.login ?? "unknown",
+        authorAvatarUrl: rc.user?.avatar_url,
+        timestamp: rc.created_at,
+        filePath: rc.path,
+        line: rc.line, // or rc.original_line if that's the correct field
       });
     }
 
     // Reviews (summary, not inline comments)
     for (const r of reviews) {
-      if (r.body) {
+      if (r.body) { // Only include reviews that have a body text
         commentBlocks.push({
           id: r.id.toString(),
-          author: {
-            id: r.user?.node_id ?? "",
-            name: r.user?.login ?? "",
-            avatarUrl: r.user?.avatar_url ?? "",
-            bot: !!r.user?.type && r.user.type === "Bot",
-          },
-          createdAt: r.submitted_at ?? r.submitted_at ?? r.commit_id ?? "",
-          body: r.body,
-          url: r.html_url,
-          type: "REVIEW",
+          kind: "comment",
+          header: `### REVIEW by @${r.user?.login ?? "unknown"} (${r.state})`,
+          commentBody: r.body,
+          author: r.user?.login ?? "unknown",
+          authorAvatarUrl: r.user?.avatar_url,
+          timestamp: r.submitted_at ?? r.created_at ?? "", // Ensure a valid date string
+          // filePath and line are not applicable to review summaries
         });
       }
     }
 
     // Sort by createdAt ascending
-    commentBlocks.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+    commentBlocks.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
 
     return commentBlocks;
   }
@@ -300,7 +301,7 @@ export class DefaultGitHubClient implements GitHubClient {
     }
 
     // Use hasMergeQueueEntry guard for merge queue participants
-    if (guardHasMergeQueueEntry(prNode)) {
+    if (hasMergeQueueEntry(prNode)) {
       const mergeQueueEntry = prNode.mergeQueueEntry;
       if (mergeQueueEntry?.commit?.author) {
         this.addOrUpdateParticipant(
@@ -311,7 +312,7 @@ export class DefaultGitHubClient implements GitHubClient {
       }
     }
 
-    const mqState = guardHasMergeQueueEntry(prNode) ? prNode.mergeQueueEntry?.state : undefined;
+    const mqState = hasMergeQueueEntry(prNode) ? prNode.mergeQueueEntry?.state : undefined;
 
     return {
       id: prNode.id,
@@ -322,14 +323,14 @@ export class DefaultGitHubClient implements GitHubClient {
       state: this.toPullState(prNode),
       checkState: this.toCheckStateFromRollup(prNode.statusCheckRollup),
       queueState:
-        guardHasMergeQueueEntry(prNode) && mqState === "MERGEABLE"
+        hasMergeQueueEntry(prNode) && mqState === "MERGEABLE"
           ? "mergeable"
-          : guardHasMergeQueueEntry(prNode) && mqState === "UNMERGEABLE"
+          : hasMergeQueueEntry(prNode) && mqState === "UNMERGEABLE"
             ? "unmergeable"
             : "pending",
       createdAt: this.toDate(prNode.createdAt),
       updatedAt: this.toDate(prNode.updatedAt),
-      enqueuedAt: guardHasMergeQueueEntry(prNode) ? this.toDate(prNode.mergeQueueEntry?.enqueuedAt) : undefined,
+      enqueuedAt: hasMergeQueueEntry(prNode) ? this.toDate(prNode.mergeQueueEntry?.enqueuedAt) : undefined,
       mergedAt: this.toDate(prNode.mergedAt),
       closedAt: this.toDate(prNode.closedAt),
       locked: prNode.locked ?? false,
@@ -408,8 +409,9 @@ export class DefaultGitHubClient implements GitHubClient {
 
   private makeTeam(obj: Actor): Team | null {
     // Apply cast as Actor type in type-guards.ts cannot be updated (file not provided)
-    if ((obj as any)?.__typename === "Team") {
-      const team = obj as { __typename: "Team"; id: string; name?: string; slug?: string };
+    if (obj?.__typename === "Team") {
+      // Cast obj to the expected shape for a Team actor
+      const team = obj as { __typename: "Team"; id: string; name?: string; slug?: string; /* other team properties if available */ };
       return {
         id: team.id,
         name: team.name ?? team.slug ?? "",

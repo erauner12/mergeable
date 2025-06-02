@@ -26,15 +26,17 @@ test("splitUnifiedDiff extracts per-file metadata", () => {
   expect(map["a.txt"].path).toBe("a.txt");
   expect(map["a.txt"].lineCount).toBe(2); // +hello, +world
   expect(map["a.txt"].isBinary).toBe(false);
-  expect(map["a.txt"].patch).toBe(SIMPLE_DIFF_CONTENT); // Check full patch content
+  expect(map["a.txt"].patch).toBe(SIMPLE_DIFF_CONTENT); // Correct: non-last patch content
   expect(map["a.txt"].byteCount).toBe(new TextEncoder().encode(SIMPLE_DIFF_CONTENT).length);
 
   expect(map["img.png"]).toBeDefined();
   expect(map["img.png"].path).toBe("img.png");
   expect(map["img.png"].lineCount).toBe(0); // Binary files have 0 line changes by this heuristic
   expect(map["img.png"].isBinary).toBe(true);
-  expect(map["img.png"].patch).toBe(BINARY_DIFF_CONTENT);
-  expect(map["img.png"].byteCount).toBe(new TextEncoder().encode(BINARY_DIFF_CONTENT).length);
+  // Corrected: The last patch from a newline-terminated multi-diff will include its trailing newline.
+  // BINARY_DIFF is defined as BINARY_DIFF_CONTENT + '\n'.
+  expect(map["img.png"].patch).toBe(BINARY_DIFF);
+  expect(map["img.png"].byteCount).toBe(new TextEncoder().encode(BINARY_DIFF).length);
 });
 
 test("splitUnifiedDiff handles empty or whitespace-only diff string", () => {

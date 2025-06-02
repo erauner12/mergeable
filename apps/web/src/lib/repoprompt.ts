@@ -31,6 +31,7 @@ export interface CommentBlockInput {
   line?: number; // For threads
   threadId?: string; // new – PR review thread (undefined for issue comments)
   diffHunk?: string; // new – raw hunk text from the API
+  resolved?: boolean; // ← NEW (undefined = not a code-thread or resolution unknown, false = unresolved, true = resolved)
 }
 
 // Updated: DiffBlockInput to include 'kind'

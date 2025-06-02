@@ -46,6 +46,16 @@ const MyOctokit = Octokit.plugin(throttling);
 export type PullRequestCommit =
   Endpoints["GET /repos/{owner}/{repo}/pulls/{pull_number}/commits"]["response"]["data"][number];
 
+// Type for individual review comments from the list endpoint
+type ReviewCommentItem =
+  Endpoints["GET /repos/{owner}/{repo}/pulls/{pull_number}/comments"]["response"]["data"][number];
+
+// Extended type for the response of fetching a single pull request comment, including 'is_resolved'
+type PullRequestCommentSingleWithResolution =
+  Endpoints["GET /repos/{owner}/{repo}/pulls/comments/{comment_id}"]["response"]["data"] & {
+    is_resolved?: boolean;
+  };
+
 export type Endpoint = {
   auth: string;
   baseUrl: string;
@@ -102,6 +112,7 @@ export async function getPullRequestDiff(
 export class DefaultGitHubClient implements GitHubClient {
   private octokits: Record<string, Octokit> = {};
   private commentCache: Map<string, Promise<CommentBlockInput[]>> = new Map();
+  private threadResolutionCache: Map<string, Promise<boolean>> = new Map(); // ADDED cache for thread resolution
 
   private getOctokit(endpoint: Endpoint): Octokit {
     if (!this.octokits[endpoint.auth]) {
@@ -201,7 +212,8 @@ export class DefaultGitHubClient implements GitHubClient {
     const octokit = this.getOctokit(endpoint);
 
     // Fetch issue comments
-    const issueCommentsResponse = await octokit.paginate( // Renamed for clarity
+    const issueCommentsResponse = await octokit.paginate(
+      // Renamed for clarity
       octokit.rest.issues.listComments,
       {
         owner,
@@ -212,15 +224,20 @@ export class DefaultGitHubClient implements GitHubClient {
     );
 
     // Fetch pull request reviews
-    const reviewsResponse = await octokit.paginate(octokit.rest.pulls.listReviews, { // Renamed for clarity
-      owner,
-      repo,
-      pull_number: number,
-      per_page: 100,
-    });
+    const reviewsResponse = await octokit.paginate(
+      octokit.rest.pulls.listReviews,
+      {
+        // Renamed for clarity
+        owner,
+        repo,
+        pull_number: number,
+        per_page: 100,
+      },
+    );
 
     // Fetch pull request review comments
-    const reviewCommentsResponse = await octokit.paginate( // Renamed for clarity
+    const reviewCommentsResponse = await octokit.paginate(
+      // Renamed for clarity
       octokit.rest.pulls.listReviewComments,
       {
         owner,
@@ -249,7 +266,8 @@ export class DefaultGitHubClient implements GitHubClient {
 
     // 2. Reviews (summary comments)
     for (const r of reviewsResponse) {
-      if (r.body && r.submitted_at) { // Only include reviews that have a body text and a submission timestamp
+      if (r.body && r.submitted_at) {
+        // Only include reviews that have a body text and a submission timestamp
         allCommentBlocks.push({
           id: `review-${r.id.toString()}`, // Ensure unique ID namespace
           kind: "comment",
@@ -264,70 +282,135 @@ export class DefaultGitHubClient implements GitHubClient {
     }
 
     // 3. Pull request review comments (comments on diffs / threads)
-    // Group review comments by thread
-    const threads = new Map<string, {
-        path: string;
-        line: number; // Line in the diff to which the thread pertains
-        diffHunk?: string;
-        commentsData: IndividualCommentData[];
-    }>();
+    // Group review comments by thread and fetch/cached resolution status
 
-    for (const rc of reviewCommentsResponse) {
-      if (!rc.user) continue; // Should ideally not happen
-
-      // Use pull_request_review_id as the primary key for threading.
-      // If null (e.g. outdated comment, or single comment not part of a review),
-      // use the comment's own ID to treat it as a distinct "thread".
-      // Prefix with "comment-" to avoid collision if rc.id could be same as a review_id.
-      const threadKey = rc.pull_request_review_id ? String(rc.pull_request_review_id) : `comment-${rc.id}`;
-      
-      let threadData = threads.get(threadKey);
-      if (!threadData) {
-        threadData = {
-          path: rc.path,
-          // `line` is the line in the diff. `original_line` is in the file.
-          // For header "THREAD ON path#L<line>", `line` (in diff) is appropriate with `diff_hunk`.
-          line: rc.line ?? (rc.original_line ?? 0), // Fallback for line
-          diffHunk: rc.diff_hunk ?? undefined,
-          commentsData: [],
-        };
-        threads.set(threadKey, threadData);
+    // Helper: groupBy function
+    function groupBy<T, K extends string | number>(
+      arr: T[],
+      keyFn: (item: T) => K,
+    ): Record<K, T[]> {
+      const result = {} as Record<K, T[]>;
+      for (const item of arr) {
+        const key = keyFn(item);
+        if (!result[key]) result[key] = [];
+        result[key].push(item);
       }
-
-      // In case the first comment didn't have a diff_hunk but a subsequent one in the same thread does.
-      // This assumes diff_hunk is consistent or the first one is representative.
-      if (!threadData.diffHunk && rc.diff_hunk) {
-        threadData.diffHunk = rc.diff_hunk;
-      }
-      // If path or line differs for comments supposedly in the same thread_id, take the first one.
-      // This shouldn't happen for well-formed threads.
-
-      threadData.commentsData.push({
-        id: rc.id.toString(),
-        commentBody: rc.body ?? "",
-        author: rc.user.login,
-        authorAvatarUrl: rc.user.avatar_url,
-        timestamp: rc.created_at,
-      });
+      return result;
     }
 
-    // Process grouped threads
-    for (const [threadKey, data] of threads.entries()) {
-      if (data.commentsData.length === 0) continue; // Skip if a thread somehow ended up empty
+    // Helper: derive a stable key representing a single conversation thread
+    // This new keying logic ensures that comments are grouped by their actual conversation root,
+    // using `in_reply_to_id` if available, or the comment's own `id` if it's a new thread root.
+    // GitHub comment IDs are unique within a repository, so the rootId is sufficient.
+    // This works for both comments within a formal review and standalone inline comment threads.
+    function getThreadKey(rc: ReviewCommentItem): string {
+      // Root of the conversation: either the comment we reply to, or ourselves.
+      // GitHub comment IDs are unique within the repository.
+      const rootId = rc.in_reply_to_id ?? rc.id;
+      return String(rootId);
+    }
+    
+    // Only include comments with a user (should always be true)
+    const validReviewComments = reviewCommentsResponse.filter(
+      (rc) => !!rc.user,
+    );
 
-      // Sort comments within the thread by timestamp (chronological)
-      data.commentsData.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
-      
+    const groupedByThreadKey = groupBy(validReviewComments, getThreadKey);
+
+    for (const threadKey in groupedByThreadKey) {
+      const commentsInThreadGroup = groupedByThreadKey[threadKey];
+      if (!commentsInThreadGroup || commentsInThreadGroup.length === 0) {
+        continue;
+      }
+
+      // Sort comments chronologically within the thread
+      commentsInThreadGroup.sort(
+        (a, b) =>
+          new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
+      );
+
+      const rootComment = commentsInThreadGroup[0]; // The first comment chronologically establishes path, line, hunk for the thread display
+      const lastComment =
+        commentsInThreadGroup[commentsInThreadGroup.length - 1]; // Get the last comment
+
+      const path = rootComment.path;
+      // Use line in diff, fallback to original_line in commit, then 0
+      const line = rootComment.line ?? rootComment.original_line ?? 0;
+      const diffHunk = rootComment.diff_hunk ?? undefined;
+
+      // Fetch resolution status for the thread
+      // Note: Standard GitHub REST API for a single comment does not provide 'is_resolved'.
+      // This implementation follows the user's plan, assuming this call yields resolution status.
+      // Use the **latest** comment's metadata because GitHub updates
+      // `is_resolved` on every comment in a thread once it is resolved,
+      // or at least the latest comment should reflect the current status.
+      let resolved = false; // Default to unresolved
+      const commentIdForThreadMeta = lastComment.id; // Use ID of the last comment in the thread
+
+      // Use threadKey for caching resolution as it represents the group.
+      const cacheKeyForResolution = threadKey;
+
+      if (this.threadResolutionCache.has(cacheKeyForResolution)) {
+        resolved = await this.threadResolutionCache.get(cacheKeyForResolution)!;
+      } else {
+        const resolutionPromise = octokit
+          .request("GET /repos/{owner}/{repo}/pulls/comments/{comment_id}", {
+            owner,
+            repo,
+            comment_id: commentIdForThreadMeta, // Use the ID of the last comment in the thread
+          })
+          .then((response) => {
+            // Assuming 'is_resolved' is available on response.data as per plan.
+            // Standard Octokit types do not include this for this endpoint.
+            return (
+              (response.data as PullRequestCommentSingleWithResolution)
+                ?.is_resolved === true
+            );
+          })
+          .catch((err) => {
+            console.warn(
+              `Failed to fetch thread metadata for threadKey ${threadKey} (comment ${commentIdForThreadMeta}):`,
+              err,
+            );
+            return false; // Default to unresolved on error
+          });
+        this.threadResolutionCache.set(
+          cacheKeyForResolution,
+          resolutionPromise,
+        );
+        // Ensure cache is cleaned up if the promise itself rejects, not just its chained .then/.catch
+        resolutionPromise.catch(() => {
+          if (
+            this.threadResolutionCache.get(cacheKeyForResolution) ===
+            resolutionPromise
+          ) {
+            this.threadResolutionCache.delete(cacheKeyForResolution);
+          }
+        });
+        resolved = await resolutionPromise;
+      }
+
+      const individualCommentsData: IndividualCommentData[] =
+        commentsInThreadGroup.map((rc) => ({
+          id: rc.id.toString(),
+          commentBody: rc.body ?? "",
+          // rc.user is guaranteed to be non-null here due to the filter above
+          author: rc.user.login,
+          authorAvatarUrl: rc.user.avatar_url,
+          timestamp: rc.created_at,
+        }));
+
       const threadBlock = makeThreadBlock(
-        threadKey,
-        data.path,
-        data.line,
-        data.diffHunk,
-        data.commentsData
+        threadKey, // The key used for grouping (e.g., path:diff_hunk)
+        path,
+        line,
+        diffHunk,
+        individualCommentsData, // Sorted
+        resolved, // Pass resolved status
       );
       allCommentBlocks.push(threadBlock);
     }
-    
+
     // Sort all blocks (issue comments, review summaries, thread blocks) by their primary timestamp
     allCommentBlocks.sort(
       (a, b) =>

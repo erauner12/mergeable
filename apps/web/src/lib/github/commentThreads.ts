@@ -28,11 +28,12 @@ export function formatSingleComment(comment: IndividualCommentData): string {
 }
 
 export function makeThreadBlock(
-  threadKey: string, // The original key used for grouping (e.g., review_id or comment-id)
+  threadKey: string, // The key representing the conversation thread, typically derived from the root comment's ID (e.g., `in_reply_to_id ?? id`) and optionally a `pull_request_review_id`.
   path: string,
   line: number,
   hunk: string | undefined,
-  comments: IndividualCommentData[] // Sorted individual comments
+  comments: IndividualCommentData[], // Sorted individual comments
+  resolved: boolean,
 ): CommentBlockInput {
   if (comments.length === 0) {
     // This case should ideally be prevented by the caller
@@ -56,6 +57,7 @@ export function makeThreadBlock(
         diffHunk: hunk,
         filePath: path,
         line: line,
+        resolved: false, // Default for empty/error case
     };
   }
 
@@ -75,5 +77,6 @@ export function makeThreadBlock(
     diffHunk: hunk,
     filePath: path,
     line: line,
+    resolved: resolved,
   };
 }

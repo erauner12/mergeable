@@ -30,8 +30,8 @@ import type {
   User,
 } from "./types";
 import type { Actor } from "./type-guards";
+import type { PullRequestNode } from "./type-guards";
 import {
-  PullRequestNode,
   isPullRequestNode,
   hasComments,
   hasFiles,
@@ -154,7 +154,10 @@ export class DefaultGitHubClient implements GitHubClient {
     // NEW code:
     const edges = data.search.edges?.filter(isNonNull) ?? [];
     const pulls = edges
-        .filter((e): e is NonNullable<typeof e> & { node: PullRequestNode } => isPullRequestNode(e.node))
+        .filter(
+          (e): e is { node: PullRequestNode } =>
+            !!e && isPullRequestNode(e.node)
+        )
         .map(e => this.makePull(e.node));
     return pulls;
   }
@@ -259,7 +262,7 @@ export class DefaultGitHubClient implements GitHubClient {
           commentBody: r.body,
           author: r.user?.login ?? "unknown",
           authorAvatarUrl: r.user?.avatar_url,
-          timestamp: r.submitted_at ?? r.created_at ?? "", // Ensure a valid date string
+          timestamp: r.submitted_at ?? "", // Ensure a valid date string
           // filePath and line are not applicable to review summaries
         });
       }
@@ -343,13 +346,11 @@ export class DefaultGitHubClient implements GitHubClient {
       deletions: prNode.deletions ?? 0,
       author: this.makeUser(prNode.author),
       requestedReviewers: prNode.reviewRequests?.nodes?.map(
-        (req: { requestedReviewer: Actor | null } | null) =>
-          req ? this.makeUser(req.requestedReviewer) : null
-      ).filter((u: User | null): u is User => isNonNull(u)) ?? [],
+        req => this.makeUser(req?.requestedReviewer ?? null)
+      ).filter(isNonNull) ?? [],
       requestedTeams: prNode.reviewRequests?.nodes?.map(
-        (req: { requestedReviewer: Actor | null } | null) =>
-          req ? this.makeTeam(req.requestedReviewer) : null
-      ).filter((t: Team | null): t is Team => isNonNull(t)) ?? [],
+        req => this.makeTeam(req?.requestedReviewer ?? null)
+      ).filter(isNonNull) ?? [],
       reviews: hasLatestOpinionatedReviews(prNode) && prNode.latestOpinionatedReviews?.nodes
         ? (() => {
             const reviews = prNode.latestOpinionatedReviews.nodes?.filter(

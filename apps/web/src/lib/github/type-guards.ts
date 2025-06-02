@@ -14,6 +14,7 @@ export type Actor =
       login: string;
       avatarUrl: string;
     }
+  | { __typename: "Team"; id: string; login?: string; avatarUrl?: string; name?: string; slug?: string } // Added name and slug from client.ts makeTeam
   | { __typename: "Organization" }
   | undefined
   | null;

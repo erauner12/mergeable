@@ -28,7 +28,7 @@ export function formatSingleComment(comment: IndividualCommentData): string {
 }
 
 export function makeThreadBlock(
-  threadKey: string, // The original key used for grouping (e.g., review_id or comment-id)
+  threadKey: string, // The key representing the conversation thread, typically derived from the root comment's ID (e.g., `in_reply_to_id ?? id`) and optionally a `pull_request_review_id`.
   path: string,
   line: number,
   hunk: string | undefined,

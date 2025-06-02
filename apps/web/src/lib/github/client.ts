@@ -298,15 +298,21 @@ export class DefaultGitHubClient implements GitHubClient {
       return result;
     }
 
-    // Helper: get thread key for a review comment
+    // Helper: derive a stable key representing a single conversation thread
+    // This new keying logic ensures that comments are grouped by their actual conversation root,
+    // using `in_reply_to_id` if available, or the comment's own `id` if it's a new thread root.
+    // `pull_request_review_id` is used as an optional discriminator.
+    // This works for both comments within a formal review and standalone inline comment threads.
     function getThreadKey(rc: ReviewCommentItem): string {
-      // Use pull_request_review_id as the primary key for threading.
-      // If null (e.g. outdated comment, or single comment not part of a review),
-      // use the comment's own ID to treat it as a distinct "thread".
-      // Prefix with "comment-" to avoid collision if rc.id could be same as a review_id.
+      // Root of the conversation: either the comment we reply to, or ourselves.
+      const rootId = rc.in_reply_to_id ?? rc.id;
+
+      // Optional discriminator: include review-id when present to avoid
+      // theoretical collisions across *different* reviews that happen to reuse
+      // the same root-id (extremely rare but free insurance).
       return rc.pull_request_review_id
-        ? String(rc.pull_request_review_id)
-        : `comment-${rc.id}`;
+        ? `${rootId}:${rc.pull_request_review_id}`
+        : `${rootId}`;
     }
 
     // Only include comments with a user (should always be true)
@@ -328,14 +334,14 @@ export class DefaultGitHubClient implements GitHubClient {
           new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
       );
 
-      const headComment = commentsInThreadGroup[0]; // The first comment chronologically establishes path, line, hunk
+      const rootComment = commentsInThreadGroup[0]; // The first comment chronologically establishes path, line, hunk for the thread display
       const lastComment =
         commentsInThreadGroup[commentsInThreadGroup.length - 1]; // Get the last comment
 
-      const path = headComment.path;
+      const path = rootComment.path;
       // Use line in diff, fallback to original_line in commit, then 0
-      const line = headComment.line ?? headComment.original_line ?? 0;
-      const diffHunk = headComment.diff_hunk ?? undefined;
+      const line = rootComment.line ?? rootComment.original_line ?? 0;
+      const diffHunk = rootComment.diff_hunk ?? undefined;
 
       // Fetch resolution status for the thread
       // Note: Standard GitHub REST API for a single comment does not provide 'is_resolved'.

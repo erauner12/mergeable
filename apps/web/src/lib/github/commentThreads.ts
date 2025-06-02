@@ -15,11 +15,14 @@ export function formatSingleComment(comment: IndividualCommentData): string {
   // Example: "Jan 01, 2024 00:00 UTC"
   const months = ["Jan","Feb","Mar","Apr","May","Jun",
                   "Jul","Aug","Sep","Oct","Nov","Dec"];
-  const day = String(date.getUTCDate()).padStart(2, "0");
-  const hours = String(date.getUTCHours()).padStart(2, "0");
-  const minutes = String(date.getUTCMinutes()).padStart(2, "0");
+  // const day = String(date.getUTCDate()).padStart(2, "0"); // Old
+  // const hours = String(date.getUTCHours()).padStart(2, "0"); // Old
+  // const minutes = String(date.getUTCMinutes()).padStart(2, "0"); // Old
   
-  const dateString = `${months[date.getUTCMonth()]} ${day}, ${date.getUTCFullYear()} ${hours}:${minutes} UTC`;
+  // const dateString = `${months[date.getUTCMonth()]} ${day}, ${date.getUTCFullYear()} ${hours}:${minutes} UTC`; // Old
+
+  // New format: YYYY-Mon-DD
+  const dateString = `${date.getUTCFullYear()}-${months[date.getUTCMonth()]}-${String(date.getUTCDate()).padStart(2, "0")}`;
 
   return `> _@${comment.author} · ${dateString}_\n\n${comment.commentBody.trim()}`;
 }
@@ -64,7 +67,7 @@ export function makeThreadBlock(
     id: `thread-${threadKey}-${firstComment.id}`,
     kind: "comment",
     header: `### THREAD ON ${path}#L${line} (${comments.length} comment${comments.length > 1 ? 's' : ''})`,
-    commentBody: comments.map(formatSingleComment).join("\n\n---\n\n"), // Use "---" as a visual separator
+    commentBody: comments.map(formatSingleComment).join("\n\n"), // Use double newline as separator
     author: lastComment.author, // Author of the last comment for block metadata
     authorAvatarUrl: lastComment.authorAvatarUrl,
     timestamp: lastComment.timestamp, // Timestamp of the last comment for sorting

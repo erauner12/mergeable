@@ -514,37 +514,38 @@ More PR body text.`;
   it("final promptText structure is determined by template and renderTemplate, including FILES_LIST", async () => {
     // as the exact final string is now highly dependent on the (mocked) template.
     // The main check for `promptText` is that `renderTemplate` was called with the right slot data.
+  });
 
-    it("guard-rail: should ignore includeLastCommit if includePr is also true", async () => {
-      const pull = mockPull({ number: 1, repo: "o/r", branch: "b", files: [] });
-      const mockLastCommit = {
-        sha: "lastsha1",
-        commit: { message: "Last commit" },
-      } as PullRequestCommit;
-      listPrCommitsSpy.mockResolvedValue([mockLastCommit]);
+  it("guard-rail: should ignore includeLastCommit if includePr is also true", async () => {
+    const pull = mockPull({ number: 1, repo: "o/r", branch: "b", files: [] });
+    const mockLastCommit = {
+      sha: "lastsha1",
+      commit: { message: "Last commit" },
+    } as PullRequestCommit;
+    listPrCommitsSpy.mockResolvedValue([mockLastCommit]);
 
-      await buildRepoPromptText(
-        pull,
-        { includePr: true, includeLastCommit: true },
-        defaultPromptMode,
-        undefined,
-        mockResolvedMetaBase,
+    await buildRepoPromptText(
+      pull,
+      { includePr: true, includeLastCommit: true },
+      defaultPromptMode,
+      undefined,
+      mockResolvedMetaBase,
+    );
+
+    expect(getPullRequestDiffSpy).toHaveBeenCalled();
+    // listPrCommits might be called if the logic for last commit diff is reached,
+    // but the diff itself should not be added.
+    // A stronger check is that the block for last commit is not created or added.
+    // The guard rail `diffOptions.includeLastCommit = false;` should prevent fetching/processing last commit diff.
+    // So, listPrCommits for the purpose of diffing the last commit should not be called if the guard works early.
+    // The current code calls listPrCommits *inside* the `if (diffOptions.includeLastCommit)` block.
+    // So, if the guard sets `diffOptions.includeLastCommit = false`, then `listPrCommits` for this purpose won't be called.
+    const callsToListPrCommitsForLastCommit =
+      listPrCommitsSpy.mock.calls.filter(
+        (call: any) => call[3] === 1, // The `perPage` argument for fetching last commit is 1
       );
-
-      expect(getPullRequestDiffSpy).toHaveBeenCalled();
-      // listPrCommits might be called if the logic for last commit diff is reached,
-      // but the diff itself should not be added.
-      // A stronger check is that the block for last commit is not created or added.
-      // The guard rail `diffOptions.includeLastCommit = false;` should prevent fetching/processing last commit diff.
-      // So, listPrCommits for the purpose of diffing the last commit should not be called if the guard works early.
-      // The current code calls listPrCommits *inside* the `if (diffOptions.includeLastCommit)` block.
-      // So, if the guard sets `diffOptions.includeLastCommit = false`, then `listPrCommits` for this purpose won't be called.
-      const callsToListPrCommitsForLastCommit =
-        listPrCommitsSpy.mock.calls.filter(
-          (call: any) => call[3] === 1, // The `perPage` argument for fetching last commit is 1
-        );
-      expect(callsToListPrCommitsForLastCommit.length).toBe(0);
-    });
+    expect(callsToListPrCommitsForLastCommit.length).toBe(0);
+  });
 
     it("conditional files list: should provide FILES_LIST slot if includePr is false and files exist", async () => {
       const pull = mockPull({

@@ -124,7 +124,6 @@ describe("buildRepoPromptText", () => {
   let listPrCommitsSpy: any;
   let getPullRequestDiffSpy: any;
 
-
   beforeEach(() => {
     vi.clearAllMocks();
     getPullRequestDiffSpy = vi.spyOn(gh, "getPullRequestDiff").mockResolvedValue(
@@ -139,7 +138,7 @@ describe("buildRepoPromptText", () => {
       .spyOn(settings, "getPromptTemplate")
       .mockImplementation((mode: PromptMode) =>
         Promise.resolve(
-          `MODE ${mode.toUpperCase()} TEMPLATE:\nSETUP:\n{{SETUP}}\nPR_DETAILS:\n{{PR_DETAILS}}\nDIFF_CONTENT:\n{{DIFF_CONTENT}}\nLINK:\n{{LINK}}`,
+          `MODE ${mode.toUpperCase()} TEMPLATE:\nSETUP:\n{{SETUP}}\nPR_DETAILS:\n{{PR_DETAILS}}\nFILES_LIST:\n{{FILES_LIST}}\nDIFF_CONTENT:\n{{DIFF_CONTENT}}\nLINK:\n{{LINK}}`,
         ),
       );
   });
@@ -148,7 +147,7 @@ describe("buildRepoPromptText", () => {
     vi.restoreAllMocks();
   });
 
-  it("should call renderTemplate with correct slots", async () => {
+  it("should call renderTemplate with correct slots, including FILES_LIST", async () => {
     const pull = mockPull({
       repo: "owner/myrepo",
       number: 123,
@@ -156,7 +155,7 @@ describe("buildRepoPromptText", () => {
       body: "PR Body here.",
       url: "https://github.com/owner/myrepo/pull/123",
       branch: "feature-branch",
-      files: ["src/main.ts", "README.md"],
+      files: ["src/main.ts", "README.md"], // files in pull object, not directly used by FILES_LIST logic
       author: {
         id: "u1",
         name: "testauthor",
@@ -165,11 +164,11 @@ describe("buildRepoPromptText", () => {
       },
       createdAt: "2024-01-01T00:00:00Z",
     });
-    const meta = { ...mockResolvedMetaBase, files: ["fileA.ts"] };
+    const meta = { ...mockResolvedMetaBase, files: ["fileA.ts", "fileB.ts"] }; // meta.files used for FILES_LIST
 
     await buildRepoPromptText(
       pull,
-      { includePr: false },
+      { includePr: false }, // !includePr means FILES_LIST should be populated
       defaultPromptMode,
       undefined,
       meta,
@@ -180,7 +179,7 @@ describe("buildRepoPromptText", () => {
       vi.mocked(renderTemplateModule.renderTemplate),
     ).toHaveBeenCalledTimes(1);
 
-    const expectedTemplateString = `MODE ${defaultPromptMode.toUpperCase()} TEMPLATE:\nSETUP:\n{{SETUP}}\nPR_DETAILS:\n{{PR_DETAILS}}\nDIFF_CONTENT:\n{{DIFF_CONTENT}}\nLINK:\n{{LINK}}`;
+    const expectedTemplateString = `MODE ${defaultPromptMode.toUpperCase()} TEMPLATE:\nSETUP:\n{{SETUP}}\nPR_DETAILS:\n{{PR_DETAILS}}\nFILES_LIST:\n{{FILES_LIST}}\nDIFF_CONTENT:\n{{DIFF_CONTENT}}\nLINK:\n{{LINK}}`;
     const renderCallArgs = vi.mocked(renderTemplateModule.renderTemplate).mock
       .calls[0];
     expect(renderCallArgs[0]).toBe(expectedTemplateString);
@@ -193,15 +192,149 @@ describe("buildRepoPromptText", () => {
       id: `pr-details-${pull.id}`,
       kind: "comment",
       header: `### PR #${pull.number} DETAILS: ${pull.title}`,
-      commentBody: "PR Body here.\n\n### files changed (1)\n- fileA.ts",
+      commentBody: "PR Body here.", // Should be clean body
       author: "testauthor",
       authorAvatarUrl: "avatar.url",
       timestamp: "2024-01-01T00:00:00Z",
     } as CommentBlockInput;
     expect(slots.PR_DETAILS).toBe(formatPromptBlock(prDetailsBlock));
+    
+    expect(slots.FILES_LIST).toBe("### files changed (2)\n- fileA.ts\n- fileB.ts");
 
     expect(slots.DIFF_CONTENT).toBe("");
     expect(slots.LINK).toBe("🔗 https://github.com/owner/myrepo/pull/123");
+  });
+
+  it("conditional files list: FILES_LIST slot should be populated if includePr is false and meta.files exist", async () => {
+    const pull = mockPull({
+      number: 1,
+      repo: "o/r",
+      branch: "b",
+      files: [], // Not used by FILES_LIST logic directly
+      body: "Original body.",
+    });
+    const metaWithFiles = {
+      ...mockResolvedMetaBase,
+      files: ["fileA.ts", "fileB.md"],
+    };
+
+    await buildRepoPromptText(
+      pull,
+      { includePr: false }, // includePr is false
+      defaultPromptMode,
+      undefined,
+      metaWithFiles,
+    );
+    
+    const slots = vi.mocked(renderTemplateModule.renderTemplate).mock.calls[0][1];
+    expect(slots.FILES_LIST).toBe("### files changed (2)\n- fileA.ts\n- fileB.md");
+    // PR_DETAILS should not contain the file list
+    const prDetailsBlock = (await buildRepoPromptText(pull, { includePr: false }, defaultPromptMode, undefined, metaWithFiles)).blocks.find(b => b.id.startsWith("pr-details")) as CommentBlockInput;
+    expect(prDetailsBlock.commentBody).toBe("Original body.");
+  });
+
+  it("conditional files list: FILES_LIST slot should be empty if includePr is true, even if meta.files exist", async () => {
+    const pull = mockPull({
+      number: 1,
+      repo: "o/r",
+      branch: "b",
+      files: [],
+      body: "Original body.",
+    });
+    const metaWithFiles = {
+      ...mockResolvedMetaBase,
+      files: ["fileA.ts", "fileB.md"],
+    };
+
+    await buildRepoPromptText(
+      pull,
+      { includePr: true }, // includePr is true
+      defaultPromptMode,
+      undefined,
+      metaWithFiles,
+    );
+    
+    const slots = vi.mocked(renderTemplateModule.renderTemplate).mock.calls[0][1];
+    expect(slots.FILES_LIST).toBe("");
+    const prDetailsBlock = (await buildRepoPromptText(pull, { includePr: true }, defaultPromptMode, undefined, metaWithFiles)).blocks.find(b => b.id.startsWith("pr-details")) as CommentBlockInput;
+    expect(prDetailsBlock.commentBody).toBe("Original body.");
+  });
+
+  it("conditional files list: FILES_LIST slot should be empty if meta.files is empty, even if includePr is false", async () => {
+    const pull = mockPull({
+      number: 1,
+      repo: "o/r",
+      branch: "b",
+      files: [],
+      body: "Original body.",
+    });
+    const metaNoFiles = { ...mockResolvedMetaBase, files: [] };
+
+    await buildRepoPromptText(
+      pull,
+      { includePr: false }, // includePr is false
+      defaultPromptMode,
+      undefined,
+      metaNoFiles, // No files in meta
+    );
+
+    const slots = vi.mocked(renderTemplateModule.renderTemplate).mock.calls[0][1];
+    expect(slots.FILES_LIST).toBe("");
+    const prDetailsBlock = (await buildRepoPromptText(pull, { includePr: false }, defaultPromptMode, undefined, metaNoFiles)).blocks.find(b => b.id.startsWith("pr-details")) as CommentBlockInput;
+    expect(prDetailsBlock.commentBody).toBe("Original body.");
+  });
+
+  it("final promptText structure is determined by template and renderTemplate, including FILES_LIST", async () => {
+    const pull = mockPull({
+      repo: "owner/myrepo",
+      number: 123,
+      title: "My Test PR",
+      body: "PR Body here.",
+      url: "https://github.com/owner/myrepo/pull/123",
+      branch: "feature-branch",
+      author: {
+        id: "u1",
+        name: "testauthor",
+        avatarUrl: "avatar.url",
+        bot: false,
+      },
+      createdAt: "2024-01-01T00:00:00Z",
+    });
+    const metaWithFiles = { ...mockResolvedMetaBase, files: ["one.js"] };
+
+    vi.mocked(renderTemplateModule.renderTemplate).mockRestore(); // Use actual renderTemplate
+    getPromptTemplateSpy.mockResolvedValue(
+      `SETUP AREA:\n{{SETUP}}\n\nPR INFO:\n{{PR_DETAILS}}\n\nFILES:\n{{FILES_LIST}}\n\nLINK:\n{{LINK}}\n\nDIFFS:\n{{DIFF_CONTENT}}`,
+    );
+
+    const { promptText, blocks } = await buildRepoPromptText(
+      pull,
+      { includePr: false }, // To populate FILES_LIST
+      defaultPromptMode,
+      undefined,
+      metaWithFiles,
+    );
+
+    expect(blocks.length).toBe(1); // Only PR details block
+    const prDetailsBlock = blocks[0] as CommentBlockInput;
+
+    const expectedSetup =
+      "cd /tmp/myrepo\ngit fetch origin\ngit checkout feature-branch";
+    const expectedPrDetails = formatPromptBlock(prDetailsBlock).trim();
+    const expectedFilesList = "### files changed (1)\n- one.js";
+    const expectedLink = "🔗 https://github.com/owner/myrepo/pull/123";
+
+    expect(promptText).toContain(`SETUP AREA:\n${expectedSetup}`);
+    expect(promptText).toContain(`PR INFO:\n${expectedPrDetails}`);
+    expect(promptText).toContain(`FILES:\n${expectedFilesList}`);
+    expect(promptText).toContain(`LINK:\n${expectedLink}`);
+    expect(promptText).not.toContain("{{DIFF_CONTENT}}"); // As it's empty and renderTemplate cleans it up
+    // Check that empty DIFFS section is removed by renderTemplate
+    const diffsSectionIndex = promptText.indexOf("DIFFS:\n");
+    const linkSectionIndex = promptText.indexOf("\nLINK:");
+    // If DIFFS section is present and empty, it would be "DIFFS:\n\nLINK:" or similar
+    // We expect "FILES:\n...\n\nLINK:"
+    expect(promptText).not.toMatch(/DIFFS:\s*\n\s*LINK:/);
   });
 
   it("should populate DIFF_CONTENT slot correctly", async () => {
@@ -338,7 +471,7 @@ describe("buildRepoPromptText", () => {
     expect(callsToListPrCommitsForLastCommit.length).toBe(0);
   });
 
-  it("conditional files list: should include 'files changed' in PR details if includePr is false and files exist", async () => {
+  it("conditional files list: should provide FILES_LIST slot if includePr is false and files exist", async () => {
     const pull = mockPull({
       number: 1,
       repo: "o/r",
@@ -351,7 +484,7 @@ describe("buildRepoPromptText", () => {
       files: ["fileA.ts", "fileB.md"],
     };
 
-    const { blocks } = await buildRepoPromptText(
+    await buildRepoPromptText(
       pull,
       { includePr: false }, // includePr is false
       defaultPromptMode,
@@ -359,17 +492,27 @@ describe("buildRepoPromptText", () => {
       metaWithFiles,
     );
 
+    // Check that FILES_LIST slot is populated
+    const slots = vi.mocked(renderTemplateModule.renderTemplate).mock.calls[0][1];
+    expect(slots.FILES_LIST).toBe("### files changed (2)\n- fileA.ts\n- fileB.md");
+
+    // PR details should only contain original body, not files list
+    const { blocks } = await buildRepoPromptText(
+      pull,
+      { includePr: false },
+      defaultPromptMode,
+      undefined,
+      metaWithFiles,
+    );
     const prDetailsBlock = blocks.find((b) =>
       b.id.startsWith("pr-details"),
     ) as CommentBlockInput;
     expect(prDetailsBlock).toBeDefined();
-    expect(prDetailsBlock.commentBody).toContain("Original body.");
-    expect(prDetailsBlock.commentBody).toContain("### files changed (2)");
-    expect(prDetailsBlock.commentBody).toContain("- fileA.ts");
-    expect(prDetailsBlock.commentBody).toContain("- fileB.md");
+    expect(prDetailsBlock.commentBody).toBe("Original body.");
+    expect(prDetailsBlock.commentBody).not.toContain("### files changed");
   });
 
-  it("conditional files list: should NOT include 'files changed' in PR details if includePr is true, even if files exist", async () => {
+  it("conditional files list: should provide empty FILES_LIST slot if includePr is true, even if files exist", async () => {
     const pull = mockPull({
       number: 1,
       repo: "o/r",
@@ -382,7 +525,7 @@ describe("buildRepoPromptText", () => {
       files: ["fileA.ts", "fileB.md"],
     };
 
-    const { blocks } = await buildRepoPromptText(
+    await buildRepoPromptText(
       pull,
       { includePr: true }, // includePr is true
       defaultPromptMode,
@@ -390,6 +533,18 @@ describe("buildRepoPromptText", () => {
       metaWithFiles,
     );
 
+    // Check that FILES_LIST slot is empty when includePr is true
+    const slots = vi.mocked(renderTemplateModule.renderTemplate).mock.calls[0][1];
+    expect(slots.FILES_LIST).toBe("");
+
+    // PR details should only contain original body
+    const { blocks } = await buildRepoPromptText(
+      pull,
+      { includePr: true },
+      defaultPromptMode,
+      undefined,
+      metaWithFiles,
+    );
     const prDetailsBlock = blocks.find((b) =>
       b.id.startsWith("pr-details"),
     ) as CommentBlockInput;
@@ -398,7 +553,7 @@ describe("buildRepoPromptText", () => {
     expect(prDetailsBlock.commentBody).not.toContain("### files changed");
   });
 
-  it("conditional files list: should NOT include 'files changed' if meta.files is empty, even if includePr is false", async () => {
+  it("conditional files list: should provide empty FILES_LIST slot if meta.files is empty, even if includePr is false", async () => {
     const pull = mockPull({
       number: 1,
       repo: "o/r",
@@ -408,7 +563,7 @@ describe("buildRepoPromptText", () => {
     });
     const metaNoFiles = { ...mockResolvedMetaBase, files: [] };
 
-    const { blocks } = await buildRepoPromptText(
+    await buildRepoPromptText(
       pull,
       { includePr: false }, // includePr is false
       defaultPromptMode,
@@ -416,6 +571,18 @@ describe("buildRepoPromptText", () => {
       metaNoFiles, // No files in meta
     );
 
+    // Check that FILES_LIST slot is empty when no files exist
+    const slots = vi.mocked(renderTemplateModule.renderTemplate).mock.calls[0][1];
+    expect(slots.FILES_LIST).toBe("");
+
+    // PR details should only contain original body
+    const { blocks } = await buildRepoPromptText(
+      pull,
+      { includePr: false },
+      defaultPromptMode,
+      undefined,
+      metaNoFiles,
+    );
     const prDetailsBlock = blocks.find((b) =>
       b.id.startsWith("pr-details"),
     ) as CommentBlockInput;
@@ -424,12 +591,12 @@ describe("buildRepoPromptText", () => {
     expect(prDetailsBlock.commentBody).not.toContain("### files changed");
   });
 
-  it("does not duplicate the files list if PR body already contains it", async () => {
+  it("FILES_LIST slot is provided independently of PR body content", async () => {
     const pull = mockPull({
       repo: "o/r",
       number: 7,
       branch: "b",
-      // simulate a previous run that already injected the section
+      // PR body can contain whatever content - FILES_LIST slot is separate
       body: `
         Some intro.
 
@@ -440,8 +607,21 @@ describe("buildRepoPromptText", () => {
       files: [], // pull.files is irrelevant here
     });
 
-    const meta = { ...mockResolvedMetaBase, files: ["foo.ts", "bar.md"] };
+    const meta = { ...mockResolvedMetaBase, files: ["newfile.ts", "another.md"] };
 
+    await buildRepoPromptText(
+      pull,
+      { includePr: false },
+      defaultPromptMode,
+      undefined,
+      meta,
+    );
+
+    // Check that FILES_LIST slot gets its content from meta.files, not PR body
+    const slots = vi.mocked(renderTemplateModule.renderTemplate).mock.calls[0][1];
+    expect(slots.FILES_LIST).toBe("### files changed (2)\n- newfile.ts\n- another.md");
+
+    // PR details block should preserve original body content unchanged
     const { blocks } = await buildRepoPromptText(
       pull,
       { includePr: false },
@@ -454,12 +634,13 @@ describe("buildRepoPromptText", () => {
       blocks.find((b) => b.id.startsWith("pr-details")) as CommentBlockInput
     ).commentBody;
 
-    // should appear exactly once
-    expect(body.match(/### files changed/gi)?.length).toBe(1); // UPDATED to use /gi
-    // Also check that the content of the list is from the *original* body, not re-appended
+    // Original PR body content should be preserved as-is
     expect(body).toContain("Some intro.");
-    expect(body).toContain("- foo.ts");
-    expect(body).toContain("- bar.md");
+    expect(body).toContain("- foo.ts"); // from original body
+    expect(body).toContain("- bar.md"); // from original body
+    // New files should NOT be in the PR body - they're only in the FILES_LIST slot
+    expect(body).not.toContain("newfile.ts");
+    expect(body).not.toContain("another.md");
   });
 
   it("should include comments if specified, potentially as threads", async () => {

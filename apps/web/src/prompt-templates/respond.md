@@ -8,6 +8,8 @@ Draft a reply to the following comment thread(s). Address the questions or conce
 
 {{PR_DETAILS}}
 
+{{FILES_LIST}}
+
 {{DIFF_CONTENT}}
 
 {{LINK}}

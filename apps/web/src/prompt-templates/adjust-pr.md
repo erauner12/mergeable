@@ -8,6 +8,8 @@ The PR title and/or body may be stale or incomplete. Based on the provided conte
 
 {{PR_DETAILS}}
 
+{{FILES_LIST}}
+
 {{DIFF_CONTENT}}
 
 {{LINK}}

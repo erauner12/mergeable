@@ -8,6 +8,8 @@ You are reviewing the following pull-request diff and associated comments. Pleas
 
 {{PR_DETAILS}}
 
+{{FILES_LIST}}
+
 {{DIFF_CONTENT}}
 
 {{LINK}}

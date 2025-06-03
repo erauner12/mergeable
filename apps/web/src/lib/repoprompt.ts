@@ -127,41 +127,8 @@ function formatDateUtcShort(ts: string): string {
 }
 
 /**
- * Ensures the "files changed" list is added to the body content idempotently.
- * @param bodyInput The original body content.
- * @param files List of file paths to include.
- * @param placeholderIfEmpty The string that represents an empty/placeholder body.
- * @returns The body content, potentially with the "files changed" list appended.
+ * Renamed and updated to handle single PromptBlock
  */
-function withFileList(
-  bodyInput: string,
-  files: string[],
-  placeholderIfEmpty: string,
-): string {
-  const FILES_LIST_RE = /^\s*###\s+files\s+changed\s+\(\d+\)/im;
-  const canonicalHeader = "### files changed";
-
-  // If a list already exists (matched by robust regex) or no files to list, return the original body.
-  if (FILES_LIST_RE.test(bodyInput) || files.length === 0) {
-    return bodyInput;
-  }
-
-  // If no list exists and there are files, append a canonical one.
-  const filesList = files.map((f) => `- ${f}`).join("\n");
-  const sectionToAdd = `${canonicalHeader} (${files.length})\n${filesList}`;
-
-  const trimmedBody = bodyInput.trim();
-
-  // If the original body (trimmed) was empty or just the placeholder, the new section is the whole body.
-  if (trimmedBody === "" || trimmedBody === placeholderIfEmpty) {
-    return sectionToAdd;
-  }
-
-  // Append to existing body content
-  return `${trimmedBody}\n\n${sectionToAdd}`; // Ensure separation
-}
-
-// Renamed and updated to handle single PromptBlock
 export function formatPromptBlock(block: PromptBlock): string {
   if (block.kind === "diff") {
     // keep the patch exactly as GitHub returned it
@@ -335,15 +302,9 @@ export async function buildRepoPromptText(
 
   // 0. PR Details Block (always first, always initially selected)
   const placeholderDescription = "_No description provided._";
-  let prBodyForBlock = pull.body?.trim() || placeholderDescription;
+  const prBodyForBlock = pull.body?.trim() || placeholderDescription;
 
-  if (!diffOptions.includePr && meta.files && meta.files.length > 0) {
-    prBodyForBlock = withFileList(
-      prBodyForBlock,
-      meta.files,
-      placeholderDescription,
-    );
-  }
+  // Files list is now handled via FILES_LIST slot only, not in PR details
 
   const prDetailsBlock: CommentBlockInput = {
     id: `pr-details-${pull.id}`,
@@ -494,6 +455,13 @@ export async function buildRepoPromptText(
 
   const prDetailsString = formatPromptBlock(prDetailsBlock);
 
+  // Generate FILES_LIST slot content (separate from PR details)
+  let filesListString = "";
+  if (!diffOptions.includePr && meta.files && meta.files.length > 0) {
+    const filesListContent = meta.files.map((f) => `- ${f}`).join("\n");
+    filesListString = `### files changed (${meta.files.length})\n${filesListContent}`;
+  }
+
   const otherSelectedBlocks = initiallySelectedBlocks.filter(
     (block) => block.id !== prDetailsBlock.id,
   );
@@ -503,46 +471,48 @@ export async function buildRepoPromptText(
   const mainTemplateString = await getPromptTemplate(mode);
 
   // Check if template contains the prDetailsBlock token
-  const hasTokenInTemplate = mainTemplateString.includes('{{prDetailsBlock}}');
-  
+  const hasTokenInTemplate = mainTemplateString.includes("{{prDetailsBlock}}");
+
   // Check if this is a standard template (contains standard slots)
-  const isStandardTemplate = mainTemplateString.includes('{{SETUP}}') && 
-                             mainTemplateString.includes('{{PR_DETAILS}}') && 
-                             mainTemplateString.includes('{{LINK}}');
-  
+  const isStandardTemplate =
+    mainTemplateString.includes("{{SETUP}}") &&
+    mainTemplateString.includes("{{PR_DETAILS}}") &&
+    mainTemplateString.includes("{{LINK}}");
+
   // Render the template with slots including prDetailsBlock support
   const renderedTemplate = renderTemplate(mainTemplateString, {
     SETUP: setupString,
     PR_DETAILS: prDetailsString,
+    FILES_LIST: filesListString, // Provide FILES_LIST slot for new templates
     DIFF_CONTENT: diffContentString,
     LINK: linkString,
     prDetailsBlock: prDetailsString, // Add support for {{prDetailsBlock}} token
   });
 
   let promptText: string;
-  
+
   if (isStandardTemplate) {
     // For standard templates, just return the rendered content
     promptText = renderedTemplate;
   } else {
     // For custom templates, use the structured approach with SETUP/LINK sections
     const promptSections = [];
-    
+
     // Always include SETUP section
     promptSections.push(`## SETUP\n${setupString}`);
-    
+
     // Add the rendered template content
     promptSections.push(renderedTemplate);
-    
+
     // For backward compatibility: if template didn't contain {{prDetailsBlock}}, append PR details
     if (!hasTokenInTemplate) {
       promptSections.push(prDetailsString);
     }
-    
+
     // Always include LINK section
     promptSections.push(linkString);
-    
-    promptText = promptSections.join('\n\n');
+
+    promptText = promptSections.join("\n\n");
   }
 
   const uniqueAllPromptBlocks = Array.from(

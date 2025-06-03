@@ -7,8 +7,8 @@ import {
   listPrCommits,
 } from "./github/client";
 import type { Pull } from "./github/types";
-import { getDefaultRoot, getPromptTemplate } from "./settings"; // Added getPromptTemplate
 import { renderTemplate } from "./renderTemplate"; // ADDED: Import renderTemplate
+import { getDefaultRoot, getPromptTemplate } from "./settings"; // Added getPromptTemplate
 
 /**
  * Functions for building RepoPrompt URLs and prompt text.
@@ -19,7 +19,7 @@ import { renderTemplate } from "./renderTemplate"; // ADDED: Import renderTempla
 
 /** Pushes `item` into `arr` IFF no existing element satisfies `key(item)`. */
 function pushUnique<T>(arr: T[], item: T, key: (t: T) => string) {
-  if (!arr.some(existing => key(existing) === key(item))) {
+  if (!arr.some((existing) => key(existing) === key(item))) {
     arr.push(item);
   }
 }
@@ -133,7 +133,11 @@ function formatDateUtcShort(ts: string): string {
  * @param placeholderIfEmpty The string that represents an empty/placeholder body.
  * @returns The body content, potentially with the "files changed" list appended.
  */
-function withFileList(bodyInput: string, files: string[], placeholderIfEmpty: string): string {
+function withFileList(
+  bodyInput: string,
+  files: string[],
+  placeholderIfEmpty: string,
+): string {
   const FILES_LIST_RE = /^\s*###\s+files\s+changed\s+\(\d+\)/im;
   const canonicalHeader = "### files changed";
 
@@ -156,7 +160,6 @@ function withFileList(bodyInput: string, files: string[], placeholderIfEmpty: st
   // Append to existing body content
   return `${trimmedBody}\n\n${sectionToAdd}`; // Ensure separation
 }
-
 
 // Renamed and updated to handle single PromptBlock
 export function formatPromptBlock(block: PromptBlock): string {
@@ -335,7 +338,11 @@ export async function buildRepoPromptText(
   let prBodyForBlock = pull.body?.trim() || placeholderDescription;
 
   if (!diffOptions.includePr && meta.files && meta.files.length > 0) {
-    prBodyForBlock = withFileList(prBodyForBlock, meta.files, placeholderDescription);
+    prBodyForBlock = withFileList(
+      prBodyForBlock,
+      meta.files,
+      placeholderDescription,
+    );
   }
 
   const prDetailsBlock: CommentBlockInput = {
@@ -347,8 +354,8 @@ export async function buildRepoPromptText(
     authorAvatarUrl: pull.author?.avatarUrl,
     timestamp: pull.createdAt,
   };
-  pushUnique(allPromptBlocks, prDetailsBlock, b => b.id);
-  pushUnique(initiallySelectedBlocks, prDetailsBlock, b => b.id);
+  pushUnique(allPromptBlocks, prDetailsBlock, (b) => b.id);
+  pushUnique(initiallySelectedBlocks, prDetailsBlock, (b) => b.id);
 
   // --- Block Fetching Logic (1. Comments, 2. Full PR Diff, 3. Last Commit Diff, 4. Specific Commits Diffs) ---
   // This logic remains largely the same, pushing to `allPromptBlocks` and `initiallySelectedBlocks`
@@ -356,15 +363,21 @@ export async function buildRepoPromptText(
   // 1. Comments, Reviews, Threads (if requested)
   if (diffOptions.includeComments) {
     if (endpoint) {
-      const commentBlocks = await fetchPullComments(endpoint, owner, repo, pull.number);
-      commentBlocks.forEach(block => {
-        pushUnique(allPromptBlocks, block, b => b.id);
+      const commentBlocks = await fetchPullComments(
+        endpoint,
+        owner,
+        repo,
+        pull.number,
+      );
+      commentBlocks.forEach((block) => {
+        pushUnique(allPromptBlocks, block, (b) => b.id);
         // Decide if comments go into initiallySelectedBlocks based on mode
-        if (mode !== "adjust-pr") { // Example: comments not initially selected for adjust-pr
-            // Potentially add to initiallySelectedBlocks for other modes if desired
-            // For now, let's assume they are generally *not* part of DIFF_CONTENT by default
-            // but are available in `allPromptBlocks` for the UI to pick.
-            // If they *should* be in DIFF_CONTENT, push them to initiallySelectedBlocks here.
+        if (mode !== "adjust-pr") {
+          // Example: comments not initially selected for adjust-pr
+          // Potentially add to initiallySelectedBlocks for other modes if desired
+          // For now, let's assume they are generally *not* part of DIFF_CONTENT by default
+          // but are available in `allPromptBlocks` for the UI to pick.
+          // If they *should* be in DIFF_CONTENT, push them to initiallySelectedBlocks here.
         }
       });
     } else {
@@ -374,27 +387,58 @@ export async function buildRepoPromptText(
 
   // 2. Full PR Diff
   if (diffOptions.includePr) {
-    const prDiff = await getPullRequestDiff(owner, repo, pull.number, token, endpoint?.baseUrl);
+    const prDiff = await getPullRequestDiff(
+      owner,
+      repo,
+      pull.number,
+      token,
+      endpoint?.baseUrl,
+    );
     if (prDiff.trim()) {
-      const block: DiffBlockInput = { id: `diff-pr-${pull.id}`, kind: "diff", header: "### FULL PR DIFF", patch: prDiff };
-      pushUnique(allPromptBlocks, block, b => b.id);
-      pushUnique(initiallySelectedBlocks, block, b => b.id);
+      const block: DiffBlockInput = {
+        id: `diff-pr-${pull.id}`,
+        kind: "diff",
+        header: "### FULL PR DIFF",
+        patch: prDiff,
+      };
+      pushUnique(allPromptBlocks, block, (b) => b.id);
+      pushUnique(initiallySelectedBlocks, block, (b) => b.id);
     }
   }
 
   // 3. Last Commit Diff
   if (diffOptions.includeLastCommit) {
-    const prCommits = await listPrCommits(owner, repo, pull.number, 1, token, endpoint?.baseUrl);
+    const prCommits = await listPrCommits(
+      owner,
+      repo,
+      pull.number,
+      1,
+      token,
+      endpoint?.baseUrl,
+    );
     if (prCommits.length > 0) {
       const lastCommit = prCommits[0];
       if (lastCommit && lastCommit.sha) {
-        const lastCommitDiff = await getCommitDiff(owner, repo, lastCommit.sha, token, endpoint?.baseUrl);
+        const lastCommitDiff = await getCommitDiff(
+          owner,
+          repo,
+          lastCommit.sha,
+          token,
+          endpoint?.baseUrl,
+        );
         if (lastCommitDiff.trim()) {
           const shortSha = lastCommit.sha.slice(0, 7);
-          const commitTitle = (lastCommit.commit.message || "No commit message").split("\n")[0];
-          const block: DiffBlockInput = { id: `diff-last-commit-${lastCommit.sha}`, kind: "diff", header: `### LAST COMMIT (${shortSha} — "${commitTitle}")`, patch: lastCommitDiff };
-          pushUnique(allPromptBlocks, block, b => b.id);
-          pushUnique(initiallySelectedBlocks, block, b => b.id);
+          const commitTitle = (
+            lastCommit.commit.message || "No commit message"
+          ).split("\n")[0];
+          const block: DiffBlockInput = {
+            id: `diff-last-commit-${lastCommit.sha}`,
+            kind: "diff",
+            header: `### LAST COMMIT (${shortSha} — "${commitTitle}")`,
+            patch: lastCommitDiff,
+          };
+          pushUnique(allPromptBlocks, block, (b) => b.id);
+          pushUnique(initiallySelectedBlocks, block, (b) => b.id);
         }
       }
     }
@@ -402,21 +446,44 @@ export async function buildRepoPromptText(
 
   // 4. Specific Commits Diffs
   if (diffOptions.commits && diffOptions.commits.length > 0) {
-    const allPrCommitsForMessages = await listPrCommits(owner, repo, pull.number, 250, token, endpoint?.baseUrl);
-    const commitMessageMap = new Map(allPrCommitsForMessages.map((c) => [c.sha, (c.commit.message || "No commit message").split("\n")[0]]));
+    const allPrCommitsForMessages = await listPrCommits(
+      owner,
+      repo,
+      pull.number,
+      250,
+      token,
+      endpoint?.baseUrl,
+    );
+    const commitMessageMap = new Map(
+      allPrCommitsForMessages.map((c) => [
+        c.sha,
+        (c.commit.message || "No commit message").split("\n")[0],
+      ]),
+    );
     for (const sha of diffOptions.commits) {
-      const commitDiff = await getCommitDiff(owner, repo, sha, token, endpoint?.baseUrl);
+      const commitDiff = await getCommitDiff(
+        owner,
+        repo,
+        sha,
+        token,
+        endpoint?.baseUrl,
+      );
       if (commitDiff.trim()) {
         const shortSha = sha.slice(0, 7);
-        const commitTitle = commitMessageMap.get(sha) || "Unknown commit message";
-        const block: DiffBlockInput = { id: `diff-commit-${sha}`, kind: "diff", header: `### COMMIT (${shortSha} — "${commitTitle}")`, patch: commitDiff };
-        pushUnique(allPromptBlocks, block, b => b.id);
-        pushUnique(initiallySelectedBlocks, block, b => b.id);
+        const commitTitle =
+          commitMessageMap.get(sha) || "Unknown commit message";
+        const block: DiffBlockInput = {
+          id: `diff-commit-${sha}`,
+          kind: "diff",
+          header: `### COMMIT (${shortSha} — "${commitTitle}")`,
+          patch: commitDiff,
+        };
+        pushUnique(allPromptBlocks, block, (b) => b.id);
+        pushUnique(initiallySelectedBlocks, block, (b) => b.id);
       }
     }
   }
   // --- End of Block Fetching Logic ---
-
 
   // Prepare content for template slots
   const setupString = [
@@ -427,22 +494,24 @@ export async function buildRepoPromptText(
 
   const prDetailsString = formatPromptBlock(prDetailsBlock);
 
-  const otherSelectedBlocks = initiallySelectedBlocks.filter(block => block.id !== prDetailsBlock.id);
+  const otherSelectedBlocks = initiallySelectedBlocks.filter(
+    (block) => block.id !== prDetailsBlock.id,
+  );
   const diffContentString = formatListOfPromptBlocks(otherSelectedBlocks);
-  
-  const linkString = `🔗 ${pull.url.includes("/pull/") ? pull.url : `https://github.com/${owner}/${repo}/pull/${pull.number}`}`;
 
+  const linkString = `🔗 ${pull.url.includes("/pull/") ? pull.url : `https://github.com/${owner}/${repo}/pull/${pull.number}`}`;
   const mainTemplateString = await getPromptTemplate(mode);
-  
+
   const promptText = renderTemplate(mainTemplateString, {
     SETUP: setupString,
     PR_DETAILS: prDetailsString,
     DIFF_CONTENT: diffContentString,
     LINK: linkString,
+    prDetailsBlock: prDetailsString, // Add support for {{prDetailsBlock}} token
   });
 
   const uniqueAllPromptBlocks = Array.from(
-    new Map(allPromptBlocks.map(b => [b.id, b])).values()
+    new Map(allPromptBlocks.map((b) => [b.id, b])).values(),
   );
 
   return { promptText, blocks: uniqueAllPromptBlocks };

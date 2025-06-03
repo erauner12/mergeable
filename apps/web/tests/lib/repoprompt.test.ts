@@ -2,20 +2,20 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PullRequestCommit } from "../../src/lib/github/client"; // Import renamed type
 import * as gh from "../../src/lib/github/client"; // ← stub network call
+import * as renderTemplateModule from "../../src/lib/renderTemplate"; // Mock renderTemplate
 import * as repopromptModule from "../../src/lib/repoprompt";
 import {
   buildRepoPromptText,
   buildRepoPromptUrl,
   type CommentBlockInput,
   defaultPromptMode,
+  formatPromptBlock,
   type PromptMode,
   type ResolvedPullMeta,
-  formatPromptBlock, // Import for checking formatted blocks
 } from "../../src/lib/repoprompt";
 import { isDiffBlock } from "../../src/lib/repoprompt.guards";
 import * as settings from "../../src/lib/settings";
 import { mockPull } from "../testing";
-import * as renderTemplateModule from "../../src/lib/renderTemplate"; // Mock renderTemplate
 
 // Mock renderTemplate to check its inputs and control its output
 vi.mock("../../src/lib/renderTemplate", () => ({
@@ -157,7 +157,12 @@ describe("buildRepoPromptText", () => {
       url: "https://github.com/owner/myrepo/pull/123",
       branch: "feature-branch",
       files: ["src/main.ts", "README.md"],
-      author: { id: "u1", name: "testauthor", avatarUrl: "avatar.url", bot: false },
+      author: {
+        id: "u1",
+        name: "testauthor",
+        avatarUrl: "avatar.url",
+        bot: false,
+      },
       createdAt: "2024-01-01T00:00:00Z",
     });
     const meta = { ...mockResolvedMetaBase, files: ["fileA.ts"] };
@@ -171,27 +176,30 @@ describe("buildRepoPromptText", () => {
     );
 
     expect(getPromptTemplateSpy).toHaveBeenCalledWith(defaultPromptMode);
-    expect(mockRenderTemplate).toHaveBeenCalledTimes(1);
+    expect(
+      vi.mocked(renderTemplateModule.renderTemplate),
+    ).toHaveBeenCalledTimes(1);
 
     const expectedTemplateString = `MODE ${defaultPromptMode.toUpperCase()} TEMPLATE:\nSETUP:\n{{SETUP}}\nPR_DETAILS:\n{{PR_DETAILS}}\nDIFF_CONTENT:\n{{DIFF_CONTENT}}\nLINK:\n{{LINK}}`;
-    const renderCallArgs = mockRenderTemplate.mock.calls[0];
+    const renderCallArgs = vi.mocked(renderTemplateModule.renderTemplate).mock
+      .calls[0];
     expect(renderCallArgs[0]).toBe(expectedTemplateString);
 
-    const slots = renderCallArgs[1] as Record<string, string>;
+    const slots = renderCallArgs[1];
     expect(slots.SETUP).toContain("cd /tmp/myrepo");
     expect(slots.SETUP).toContain("git checkout feature-branch");
-    
+
     const prDetailsBlock = {
-        id: `pr-details-${pull.id}`,
-        kind: "comment",
-        header: `### PR #${pull.number} DETAILS: ${pull.title}`,
-        commentBody: "PR Body here.\n\n### files changed (1)\n- fileA.ts",
-        author: "testauthor",
-        authorAvatarUrl: "avatar.url",
-        timestamp: "2024-01-01T00:00:00Z",
+      id: `pr-details-${pull.id}`,
+      kind: "comment",
+      header: `### PR #${pull.number} DETAILS: ${pull.title}`,
+      commentBody: "PR Body here.\n\n### files changed (1)\n- fileA.ts",
+      author: "testauthor",
+      authorAvatarUrl: "avatar.url",
+      timestamp: "2024-01-01T00:00:00Z",
     } as CommentBlockInput;
     expect(slots.PR_DETAILS).toBe(formatPromptBlock(prDetailsBlock).trim());
-    
+
     expect(slots.DIFF_CONTENT).toBe("");
     expect(slots.LINK).toBe("🔗 https://github.com/owner/myrepo/pull/123");
   });
@@ -205,31 +213,44 @@ describe("buildRepoPromptText", () => {
       undefined,
       mockResolvedMeta,
     );
-    
-    expect(mockRenderTemplate).toHaveBeenCalledTimes(1);
-    const slots = mockRenderTemplate.mock.calls[0][1] as Record<string, string>;
+
+    expect(
+      vi.mocked(renderTemplateModule.renderTemplate),
+    ).toHaveBeenCalledTimes(1);
+    const slots = vi.mocked(renderTemplateModule.renderTemplate).mock
+      .calls[0][1];
 
     const expectedDiffBlock: repopromptModule.DiffBlockInput = {
-        id: `diff-pr-${pull.id}`,
-        kind: "diff",
-        header: "### FULL PR DIFF",
-        patch: "dummy pr diff content",
+      id: `diff-pr-${pull.id}`,
+      kind: "diff",
+      header: "### FULL PR DIFF",
+      patch: "dummy pr diff content",
     };
-    expect(slots.DIFF_CONTENT).toBe(formatPromptBlock(expectedDiffBlock).trim());
+    expect(slots.DIFF_CONTENT).toBe(
+      formatPromptBlock(expectedDiffBlock).trim(),
+    );
   });
-  
+
   it("DIFF_CONTENT slot should be empty if no diffs or comments are selected/included", async () => {
     const pull = mockPull({ number: 789, repo: "o/r", branch: "b", files: [] });
     await buildRepoPromptText(
       pull,
-      { includePr: false, includeComments: false, includeLastCommit: false, commits: [] },
+      {
+        includePr: false,
+        includeComments: false,
+        includeLastCommit: false,
+        commits: [],
+      },
       defaultPromptMode,
       undefined,
-      mockResolvedMeta
+      mockResolvedMeta,
     );
 
-    expect(mockRenderTemplate).toHaveBeenCalledTimes(1);
-    const slots = mockRenderTemplate.mock.calls[0][1] as Record<string, string>;
+    expect(
+      vi.mocked(renderTemplateModule.renderTemplate),
+    ).toHaveBeenCalledTimes(1);
+    const slots = vi.mocked(renderTemplateModule.renderTemplate).mock
+      .calls[0][1];
     expect(slots.DIFF_CONTENT).toBe("");
   });
 
@@ -241,15 +262,20 @@ describe("buildRepoPromptText", () => {
       body: "PR Body here.",
       url: "https://github.com/owner/myrepo/pull/123",
       branch: "feature-branch",
-      author: { id: "u1", name: "testauthor", avatarUrl: "avatar.url", bot: false },
+      author: {
+        id: "u1",
+        name: "testauthor",
+        avatarUrl: "avatar.url",
+        bot: false,
+      },
       createdAt: "2024-01-01T00:00:00Z",
     });
     const metaNoFiles = { ...mockResolvedMetaBase, files: [] };
 
     vi.mocked(renderTemplateModule.renderTemplate).mockRestore();
-     getPromptTemplateSpy.mockResolvedValue(
-        `SETUP AREA:\n{{SETUP}}\n\nPR INFO:\n{{PR_DETAILS}}\n\nLINK:\n{{LINK}}\n\nDIFFS:\n{{DIFF_CONTENT}}`
-     );
+    getPromptTemplateSpy.mockResolvedValue(
+      `SETUP AREA:\n{{SETUP}}\n\nPR INFO:\n{{PR_DETAILS}}\n\nLINK:\n{{LINK}}\n\nDIFFS:\n{{DIFF_CONTENT}}`,
+    );
 
     const { promptText, blocks } = await buildRepoPromptText(
       pull,
@@ -262,19 +288,16 @@ describe("buildRepoPromptText", () => {
     expect(blocks.length).toBe(1);
     const prDetailsBlock = blocks[0] as CommentBlockInput;
 
-    const expectedSetup = "cd /tmp/myrepo\ngit fetch origin\ngit checkout feature-branch";
+    const expectedSetup =
+      "cd /tmp/myrepo\ngit fetch origin\ngit checkout feature-branch";
     const expectedPrDetails = formatPromptBlock(prDetailsBlock).trim();
     const expectedLink = "🔗 https://github.com/owner/myrepo/pull/123";
-    
+
     expect(promptText).toContain(`SETUP AREA:\n${expectedSetup}`);
     expect(promptText).toContain(`PR INFO:\n${expectedPrDetails}`);
     expect(promptText).toContain(`LINK:\n${expectedLink}`);
     expect(promptText).not.toContain("{{DIFF_CONTENT}}");
     expect(promptText).not.toContain("DIFFS:\n\nLINK:");
-
-    vi.mock("../../src/lib/renderTemplate", () => ({
-      renderTemplate: mockRenderTemplate,
-    }));
   });
 
   // ... (Keep other tests like guard-rail, conditional files list, comments, diffs, ordering, unique IDs, etc.)
@@ -286,7 +309,10 @@ describe("buildRepoPromptText", () => {
 
   it("guard-rail: should ignore includeLastCommit if includePr is also true", async () => {
     const pull = mockPull({ number: 1, repo: "o/r", branch: "b", files: [] });
-    const mockLastCommit = { sha: "lastsha1", commit: { message: "Last commit" } } as PullRequestCommit;
+    const mockLastCommit = {
+      sha: "lastsha1",
+      commit: { message: "Last commit" },
+    } as PullRequestCommit;
     listPrCommitsSpy.mockResolvedValue([mockLastCommit]);
 
     await buildRepoPromptText(
@@ -305,16 +331,26 @@ describe("buildRepoPromptText", () => {
     // So, listPrCommits for the purpose of diffing the last commit should not be called if the guard works early.
     // The current code calls listPrCommits *inside* the `if (diffOptions.includeLastCommit)` block.
     // So, if the guard sets `diffOptions.includeLastCommit = false`, then `listPrCommits` for this purpose won't be called.
-    const callsToListPrCommitsForLastCommit = listPrCommitsSpy.mock.calls.filter(
-        (call: any) => call[3] === 1 // The `perPage` argument for fetching last commit is 1
-    );
+    const callsToListPrCommitsForLastCommit =
+      listPrCommitsSpy.mock.calls.filter(
+        (call: any) => call[3] === 1, // The `perPage` argument for fetching last commit is 1
+      );
     expect(callsToListPrCommitsForLastCommit.length).toBe(0);
   });
 
   it("conditional files list: should include 'files changed' in PR details if includePr is false and files exist", async () => {
-    const pull = mockPull({ number: 1, repo: "o/r", branch: "b", files: [], body: "Original body." });
-    const metaWithFiles = { ...mockResolvedMetaBase, files: ["fileA.ts", "fileB.md"] };
-    
+    const pull = mockPull({
+      number: 1,
+      repo: "o/r",
+      branch: "b",
+      files: [],
+      body: "Original body.",
+    });
+    const metaWithFiles = {
+      ...mockResolvedMetaBase,
+      files: ["fileA.ts", "fileB.md"],
+    };
+
     const { blocks } = await buildRepoPromptText(
       pull,
       { includePr: false }, // includePr is false
@@ -323,7 +359,9 @@ describe("buildRepoPromptText", () => {
       metaWithFiles,
     );
 
-    const prDetailsBlock = blocks.find(b => b.id.startsWith("pr-details")) as CommentBlockInput;
+    const prDetailsBlock = blocks.find((b) =>
+      b.id.startsWith("pr-details"),
+    ) as CommentBlockInput;
     expect(prDetailsBlock).toBeDefined();
     expect(prDetailsBlock.commentBody).toContain("Original body.");
     expect(prDetailsBlock.commentBody).toContain("### files changed (2)");
@@ -332,8 +370,17 @@ describe("buildRepoPromptText", () => {
   });
 
   it("conditional files list: should NOT include 'files changed' in PR details if includePr is true, even if files exist", async () => {
-    const pull = mockPull({ number: 1, repo: "o/r", branch: "b", files: [], body: "Original body." });
-    const metaWithFiles = { ...mockResolvedMetaBase, files: ["fileA.ts", "fileB.md"] };
+    const pull = mockPull({
+      number: 1,
+      repo: "o/r",
+      branch: "b",
+      files: [],
+      body: "Original body.",
+    });
+    const metaWithFiles = {
+      ...mockResolvedMetaBase,
+      files: ["fileA.ts", "fileB.md"],
+    };
 
     const { blocks } = await buildRepoPromptText(
       pull,
@@ -343,14 +390,22 @@ describe("buildRepoPromptText", () => {
       metaWithFiles,
     );
 
-    const prDetailsBlock = blocks.find(b => b.id.startsWith("pr-details")) as CommentBlockInput;
+    const prDetailsBlock = blocks.find((b) =>
+      b.id.startsWith("pr-details"),
+    ) as CommentBlockInput;
     expect(prDetailsBlock).toBeDefined();
     expect(prDetailsBlock.commentBody).toBe("Original body."); // Only original body
     expect(prDetailsBlock.commentBody).not.toContain("### files changed");
   });
-  
+
   it("conditional files list: should NOT include 'files changed' if meta.files is empty, even if includePr is false", async () => {
-    const pull = mockPull({ number: 1, repo: "o/r", branch: "b", files: [], body: "Original body." });
+    const pull = mockPull({
+      number: 1,
+      repo: "o/r",
+      branch: "b",
+      files: [],
+      body: "Original body.",
+    });
     const metaNoFiles = { ...mockResolvedMetaBase, files: [] };
 
     const { blocks } = await buildRepoPromptText(
@@ -361,7 +416,9 @@ describe("buildRepoPromptText", () => {
       metaNoFiles, // No files in meta
     );
 
-    const prDetailsBlock = blocks.find(b => b.id.startsWith("pr-details")) as CommentBlockInput;
+    const prDetailsBlock = blocks.find((b) =>
+      b.id.startsWith("pr-details"),
+    ) as CommentBlockInput;
     expect(prDetailsBlock).toBeDefined();
     expect(prDetailsBlock.commentBody).toBe("Original body.");
     expect(prDetailsBlock.commentBody).not.toContain("### files changed");
@@ -404,7 +461,6 @@ describe("buildRepoPromptText", () => {
     expect(body).toContain("- foo.ts");
     expect(body).toContain("- bar.md");
   });
-
 
   it("should include comments if specified, potentially as threads", async () => {
     const pull = mockPull({
@@ -566,106 +622,149 @@ describe("buildRepoPromptText", () => {
   });
 
   // ... (keep and adapt other diff-related tests, ensuring they check for block.kind === 'diff' and correct IDs) ...
-  
-    describe("PR Details Token Replacement", () => {
-      const pull = mockPull({
-        repo: "owner/myrepo",
-        number: 777,
-        title: "Token Test PR",
-        body: "PR Body for token test.",
-        url: "https://github.com/owner/myrepo/pull/777",
-        branch: "token-branch",
-        files: [],
-        author: { id: "u1", name: "tokenauthor", avatarUrl: "avatar.url", bot: false },
-        createdAt: "2024-02-01T00:00:00Z",
-      });
-      const meta = { ...mockResolvedMetaBase, repo: "myrepo", branch: "token-branch", files: [] };
-      const prDetailsContentPattern = /### PR #777 DETAILS: Token Test PR/;
-  
-      test("should replace {{prDetailsBlock}} token with PR details content", async () => {
-        getPromptTemplateSpy.mockResolvedValue("System Preamble.\n{{prDetailsBlock}}\nSystem Postamble.");
-        
-        const { promptText } = await buildRepoPromptText(pull, {}, defaultPromptMode, undefined, meta);
-  
-        expect(promptText).toMatch(/System Preamble\./);
-        expect(promptText).toMatch(prDetailsContentPattern); // PR details are injected
-        expect(promptText).toMatch(/System Postamble\./);
-        expect(promptText.includes("{{prDetailsBlock}}")).toBe(false); // Token is replaced
-  
-        // Check order: SETUP, (Preamble, PR Details, Postamble), LINK
-        const expectedOrder = [
-          "## SETUP",
-          "System Preamble.",
-          "### PR #777 DETAILS: Token Test PR",
-          "System Postamble.",
-          "🔗 https://github.com/owner/myrepo/pull/777"
-        ];
-        let lastIndex = -1;
-        for (const part of expectedOrder) {
-          const currentIndex = promptText.indexOf(part);
-          expect(currentIndex, `Part "${part}" not found or out of order.`).toBeGreaterThan(lastIndex);
-          lastIndex = currentIndex;
-        }
-      });
-  
-      test("should remove {{prDetailsBlock}} token if PR details content is empty (e.g., no blocks selected)", async () => {
-        // This scenario is a bit artificial as PR details block is always created and initially selected.
-        // To test token removal with empty content, we'd need to manipulate `initiallySelectedBlocks`
-        // or have `formatListOfPromptBlocks` return empty for it.
-        // For now, let's assume `combinedInitialContent` could be empty if all blocks were deselected by some future logic
-        // or if `formatListOfPromptBlocks` returned empty.
-        // The current implementation of `buildRepoPromptText` ensures PR details is always in `initiallySelectedBlocks`.
-        // So, `trimmedCombinedInitialContent` will contain at least the PR details.
-        // A more realistic test for "token removal" is if the template is *only* the token.
-        
-        getPromptTemplateSpy.mockResolvedValue("System Preamble.\n{{prDetailsBlock}}\nSystem Postamble.");
-        // To simulate empty combinedInitialContent, we'd need to mock formatListOfPromptBlocks or filter initiallySelectedBlocks
-        // However, the current logic ensures PR details are always there.
-        // The test above already shows replacement. If combinedInitialContent were empty, it would be replaced by empty string.
-  
-        // Let's test if the template is *just* the token and content is provided.
-        getPromptTemplateSpy.mockResolvedValue("{{prDetailsBlock}}");
-        const { promptText: promptTextOnlyToken } = await buildRepoPromptText(pull, {}, defaultPromptMode, undefined, meta);
-        expect(promptTextOnlyToken).toMatch(prDetailsContentPattern);
-        expect(promptTextOnlyToken.includes("{{prDetailsBlock}}")).toBe(false);
-        // Check order: SETUP, PR Details, LINK
-        const expectedOrderOnlyToken = [
-          "## SETUP",
-          "### PR #777 DETAILS: Token Test PR",
-          "🔗 https://github.com/owner/myrepo/pull/777"
-        ];
-        let lastIndexOnlyToken = -1;
-        for (const part of expectedOrderOnlyToken) {
-          const currentIndex = promptTextOnlyToken.indexOf(part);
-          expect(currentIndex, `Part "${part}" not found or out of order in 'only token' case.`).toBeGreaterThan(lastIndexOnlyToken);
-          lastIndexOnlyToken = currentIndex;
-        }
-      });
-  
-      test("should append PR details content if token is not present in template (backward compatibility)", async () => {
-        getPromptTemplateSpy.mockResolvedValue("Base prompt without token.");
-        
-        const { promptText } = await buildRepoPromptText(pull, {}, defaultPromptMode, undefined, meta);
-  
-        expect(promptText).toMatch(/Base prompt without token\./);
-        expect(promptText).toMatch(prDetailsContentPattern); // PR details are appended
-        expect(promptText.includes("{{prDetailsBlock}}")).toBe(false);
-  
-        // Check order: SETUP, Base Prompt, PR Details, LINK
-        const expectedOrder = [
-          "## SETUP",
-          "Base prompt without token.",
-          "### PR #777 DETAILS: Token Test PR",
-          "🔗 https://github.com/owner/myrepo/pull/777"
-        ];
-        let lastIndex = -1;
-        for (const part of expectedOrder) {
-          const currentIndex = promptText.indexOf(part);
-          expect(currentIndex, `Part "${part}" not found or out of order in 'no token' case.`).toBeGreaterThan(lastIndex);
-          lastIndex = currentIndex;
-        }
-      });
+
+  describe("PR Details Token Replacement", () => {
+    const pull = mockPull({
+      repo: "owner/myrepo",
+      number: 777,
+      title: "Token Test PR",
+      body: "PR Body for token test.",
+      url: "https://github.com/owner/myrepo/pull/777",
+      branch: "token-branch",
+      files: [],
+      author: {
+        id: "u1",
+        name: "tokenauthor",
+        avatarUrl: "avatar.url",
+        bot: false,
+      },
+      createdAt: "2024-02-01T00:00:00Z",
     });
+    const meta = {
+      ...mockResolvedMetaBase,
+      repo: "myrepo",
+      branch: "token-branch",
+      files: [],
+    };
+    const prDetailsContentPattern = /### PR #777 DETAILS: Token Test PR/;
+
+    test("should replace {{prDetailsBlock}} token with PR details content", async () => {
+      getPromptTemplateSpy.mockResolvedValue(
+        "System Preamble.\n{{prDetailsBlock}}\nSystem Postamble.",
+      );
+
+      const { promptText } = await buildRepoPromptText(
+        pull,
+        {},
+        defaultPromptMode,
+        undefined,
+        meta,
+      );
+
+      console.log("ACTUAL PROMPT TEXT:", promptText);
+
+      expect(promptText).toMatch(/System Preamble\./);
+      expect(promptText).toMatch(prDetailsContentPattern); // PR details are injected
+      expect(promptText).toMatch(/System Postamble\./);
+      expect(promptText.includes("{{prDetailsBlock}}")).toBe(false); // Token is replaced
+
+      // Check order: SETUP, (Preamble, PR Details, Postamble), LINK
+      const expectedOrder = [
+        "## SETUP",
+        "System Preamble.",
+        "### PR #777 DETAILS: Token Test PR",
+        "System Postamble.",
+        "🔗 https://github.com/owner/myrepo/pull/777",
+      ];
+      let lastIndex = -1;
+      for (const part of expectedOrder) {
+        const currentIndex = promptText.indexOf(part);
+        expect(
+          currentIndex,
+          `Part "${part}" not found or out of order.`,
+        ).toBeGreaterThan(lastIndex);
+        lastIndex = currentIndex;
+      }
+    });
+
+    test("should remove {{prDetailsBlock}} token if PR details content is empty (e.g., no blocks selected)", async () => {
+      // This scenario is a bit artificial as PR details block is always created and initially selected.
+      // To test token removal with empty content, we'd need to manipulate `initiallySelectedBlocks`
+      // or have `formatListOfPromptBlocks` return empty for it.
+      // For now, let's assume `combinedInitialContent` could be empty if all blocks were deselected by some future logic
+      // or if `formatListOfPromptBlocks` returned empty.
+      // The current implementation of `buildRepoPromptText` ensures PR details is always in `initiallySelectedBlocks`.
+      // So, `trimmedCombinedInitialContent` will contain at least the PR details.
+      // A more realistic test for "token removal" is if the template is *only* the token.
+
+      getPromptTemplateSpy.mockResolvedValue(
+        "System Preamble.\n{{prDetailsBlock}}\nSystem Postamble.",
+      );
+      // To simulate empty combinedInitialContent, we'd need to mock formatListOfPromptBlocks or filter initiallySelectedBlocks
+      // However, the current logic ensures PR details are always there.
+      // The test above already shows replacement. If combinedInitialContent were empty, it would be replaced by empty string.
+
+      // Let's test if the template is *just* the token and content is provided.
+      getPromptTemplateSpy.mockResolvedValue("{{prDetailsBlock}}");
+      const { promptText: promptTextOnlyToken } = await buildRepoPromptText(
+        pull,
+        {},
+        defaultPromptMode,
+        undefined,
+        meta,
+      );
+      expect(promptTextOnlyToken).toMatch(prDetailsContentPattern);
+      expect(promptTextOnlyToken.includes("{{prDetailsBlock}}")).toBe(false);
+      // Check order: SETUP, PR Details, LINK
+      const expectedOrderOnlyToken = [
+        "## SETUP",
+        "### PR #777 DETAILS: Token Test PR",
+        "🔗 https://github.com/owner/myrepo/pull/777",
+      ];
+      let lastIndexOnlyToken = -1;
+      for (const part of expectedOrderOnlyToken) {
+        const currentIndex = promptTextOnlyToken.indexOf(part);
+        expect(
+          currentIndex,
+          `Part "${part}" not found or out of order in 'only token' case.`,
+        ).toBeGreaterThan(lastIndexOnlyToken);
+        lastIndexOnlyToken = currentIndex;
+      }
+    });
+
+    test("should append PR details content if token is not present in template (backward compatibility)", async () => {
+      getPromptTemplateSpy.mockResolvedValue("Base prompt without token.");
+
+      const { promptText } = await buildRepoPromptText(
+        pull,
+        {},
+        defaultPromptMode,
+        undefined,
+        meta,
+      );
+
+      expect(promptText).toMatch(/Base prompt without token\./);
+      expect(promptText).toMatch(prDetailsContentPattern); // PR details are appended
+      expect(promptText.includes("{{prDetailsBlock}}")).toBe(false);
+
+      // Check order: SETUP, Base Prompt, PR Details, LINK
+      const expectedOrder = [
+        "## SETUP",
+        "Base prompt without token.",
+        "### PR #777 DETAILS: Token Test PR",
+        "🔗 https://github.com/owner/myrepo/pull/777",
+      ];
+      let lastIndex = -1;
+      for (const part of expectedOrder) {
+        const currentIndex = promptText.indexOf(part);
+        expect(
+          currentIndex,
+          `Part "${part}" not found or out of order in 'no token' case.`,
+        ).toBeGreaterThan(lastIndex);
+        lastIndex = currentIndex;
+      }
+    });
+  });
 
   it("should include last commit diff if specified", async () => {
     const mockLastCommit = {

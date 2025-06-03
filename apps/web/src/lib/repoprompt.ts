@@ -447,7 +447,7 @@ export async function buildRepoPromptText(
 
   const allSlots = {
     SETUP: setupString,
-    PR_DETAILS: prDetailsString, // Populated if template uses {{PR_DETAILS}}
+    PR_DETAILS: tplMeta.expectsPrDetails ? prDetailsString : "", // Only populate if template expects it
     FILES_LIST: filesListString,
     DIFF_CONTENT: diffContentString,
     LINK: linkString,
@@ -464,8 +464,8 @@ export async function buildRepoPromptText(
   const uniqueAllPromptBlocks = Array.from(
     new Map(allPromptBlocks.map((b) => [b.id, b])).values(),
   ).sort((a, b) => {
-    const rank = (x: PromptBlock) =>
-      x.id.startsWith("pr-details") ? 0 : x.kind === "comment" ? 1 : 2;
+    // PR-details blocks are no longer present; just sort comments before diffs
+    const rank = (x: PromptBlock) => x.kind === "comment" ? 1 : 2;
     return rank(a) - rank(b);
   });
 

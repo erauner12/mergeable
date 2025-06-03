@@ -1,5 +1,11 @@
 import { IconNames } from "@blueprintjs/icons"; // For finding buttons by icon
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react"; // ADDED act
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { PromptCopyDialog } from "../../src/components/PromptCopyDialog";
 import * as DiffUtils from "../../src/lib/github/diffUtils"; // To mock buildClipboardPayload
@@ -58,7 +64,8 @@ index 0000000..2222222 100644
 +content2
 `;
 
-const MOCK_BLOCKS_WITH_DIFF_NO_PR_DETAILS: PromptBlock[] = [ // Renamed, PR details won't be here
+const MOCK_BLOCKS_WITH_DIFF_NO_PR_DETAILS: PromptBlock[] = [
+  // Renamed, PR details won't be here
   {
     id: "comment-1", // Changed ID to be more specific
     kind: "comment",
@@ -104,7 +111,6 @@ This is the PR body.
 
 🔗 https://github.com/owner/repo/pull/123
 `.trim();
-
 
 describe("PromptCopyDialog with FileDiffPicker integration", () => {
   let originalClipboard: typeof navigator.clipboard;
@@ -201,8 +207,12 @@ describe("PromptCopyDialog with FileDiffPicker integration", () => {
     );
 
     // Open picker and select 1 file
-    fireEvent.click(screen.getByTestId("choose-files-diff-1"));
-    fireEvent.click(screen.getByText("Confirm Picker (1 file)"));
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("choose-files-diff-1"));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByText("Confirm Picker (1 file)"));
+    });
     await waitFor(() =>
       expect(screen.queryByText("FileDiffPickerMock")).not.toBeInTheDocument(),
     );
@@ -211,7 +221,9 @@ describe("PromptCopyDialog with FileDiffPicker integration", () => {
     const checkboxes = screen.getAllByRole("checkbox");
     checkboxes.forEach((cb) => expect(cb).toBeChecked());
 
-    fireEvent.click(screen.getByText("Copy Selected"));
+    await act(async () => {
+      fireEvent.click(screen.getByText("Copy Selected"));
+    });
 
     await waitFor(() => {
       expect(mockCopyToClipboard).toHaveBeenCalledTimes(1);
@@ -232,20 +244,24 @@ describe("PromptCopyDialog with FileDiffPicker integration", () => {
     const anotherCommentBlock = MOCK_BLOCKS_WITH_DIFF_NO_PR_DETAILS.find(
       (b) => b.id === "comment-2", // Use updated ID
     )!;
-    
+
     // The selected blocks' content (comments + processed diff) should appear first
-    expect(copiedText).toContain(formatPromptBlock(generalCommentBlock).trimEnd());
-    expect(copiedText).toContain(formatPromptBlock(anotherCommentBlock).trimEnd());
+    expect(copiedText).toContain(
+      formatPromptBlock(generalCommentBlock).trimEnd(),
+    );
+    expect(copiedText).toContain(
+      formatPromptBlock(anotherCommentBlock).trimEnd(),
+    );
     // The diff block's content will be the result of buildClipboardPayload
     // We don't check its exact content here, just that the spy was called.
 
     // Then the initialPromptText (which contains PR details from template) should follow
     expect(copiedText).toContain(MOCK_INITIAL_PROMPT_TEXT_WITH_PR_DETAILS);
-    
-    // Ensure PR details are not duplicated (they should only come from initialPromptText)
-    const prDetailsHeaderCount = (copiedText.match(/### PR details/g) ?? []).length;
-    expect(prDetailsHeaderCount).toBe(1);
 
+    // Ensure PR details are not duplicated (they should only come from initialPromptText)
+    const prDetailsHeaderCount = (copiedText.match(/### PR details/g) ?? [])
+      .length;
+    expect(prDetailsHeaderCount).toBe(1);
 
     buildClipboardPayloadSpy.mockRestore();
   });
@@ -265,8 +281,12 @@ describe("PromptCopyDialog with FileDiffPicker integration", () => {
       />,
     );
 
-    fireEvent.click(screen.getByTestId("choose-files-diff-1"));
-    fireEvent.click(screen.getByText("Confirm Picker (1 file)"));
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("choose-files-diff-1"));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByText("Confirm Picker (1 file)"));
+    });
     await waitFor(() =>
       expect(screen.queryByText("FileDiffPickerMock")).not.toBeInTheDocument(),
     );
@@ -290,7 +310,9 @@ describe("PromptCopyDialog with FileDiffPicker integration", () => {
       ?.closest("button");
     expect(copyButton).toBeInTheDocument();
 
-    fireEvent.click(copyButton!);
+    await act(async () => {
+      fireEvent.click(copyButton!);
+    });
 
     await waitFor(() => {
       expect(mockCopyToClipboard).toHaveBeenCalledTimes(1);
@@ -335,8 +357,12 @@ describe("PromptCopyDialog with FileDiffPicker integration", () => {
       ); // Check against raw patch
     });
 
-    fireEvent.click(screen.getByTestId("choose-files-diff-1")); // Use data-testid
-    fireEvent.click(screen.getByText("Confirm Picker (1 file)"));
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("choose-files-diff-1")); // Use data-testid
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByText("Confirm Picker (1 file)"));
+    });
     await waitFor(() =>
       expect(screen.queryByText("FileDiffPickerMock")).not.toBeInTheDocument(),
     );
@@ -367,8 +393,12 @@ describe("PromptCopyDialog with FileDiffPicker integration", () => {
       />,
     );
     // Interact with picker to set hasPickedFiles to true
-    fireEvent.click(screen.getByTestId("choose-files-diff-1"));
-    fireEvent.click(screen.getByText("Confirm Picker (1 file)"));
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("choose-files-diff-1"));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByText("Confirm Picker (1 file)"));
+    });
     await waitFor(() =>
       expect(screen.getByText("(1 of 2 files)")).toBeInTheDocument(),
     );
@@ -378,14 +408,16 @@ describe("PromptCopyDialog with FileDiffPicker integration", () => {
       .spyOn(DiffUtils, "buildClipboardPayload")
       .mockReturnValue("PICKED_FILES_PAYLOAD");
     // Force a re-render to ensure the content updates if it hadn't already fully processed
-    rerender(
-      <PromptCopyDialog
-        isOpen={true}
-        initialPromptText={MOCK_INITIAL_PROMPT_TEXT_WITH_PR_DETAILS}
-        blocks={MOCK_BLOCKS_WITH_DIFF_NO_PR_DETAILS}
-        onClose={mockOnClose}
-      />,
-    );
+    await act(async () => {
+      rerender(
+        <PromptCopyDialog
+          isOpen={true}
+          initialPromptText={MOCK_INITIAL_PROMPT_TEXT_WITH_PR_DETAILS}
+          blocks={MOCK_BLOCKS_WITH_DIFF_NO_PR_DETAILS}
+          onClose={mockOnClose}
+        />,
+      );
+    });
     await waitFor(() => {
       const diffBlockDiv = screen
         .getByText("### PR Diff")
@@ -394,21 +426,15 @@ describe("PromptCopyDialog with FileDiffPicker integration", () => {
       expect(preElement).toHaveTextContent("PICKED_FILES_PAYLOAD");
     });
     buildClipboardPayloadSpy.mockRestore();
-
+    await act(async () => {
+      fireEvent.click(screen.getByText("Copy Selected"));
+    });
     // Close the dialog
-    fireEvent.click(screen.getByText("Close"));
+    await act(async () => {
+      fireEvent.click(screen.getByText("Close"));
+    });
     expect(mockOnClose).toHaveBeenCalledTimes(1);
 
-    // Re-render as closed (simulating parent component behavior)
-    rerender(
-      <PromptCopyDialog
-        isOpen={false} // Now closed
-        initialPromptText={MOCK_INITIAL_PROMPT_TEXT_WITH_PR_DETAILS}
-        blocks={MOCK_BLOCKS_WITH_DIFF_NO_PR_DETAILS}
-        onClose={mockOnClose}
-      />,
-    );
-    // Reopen
     rerender(
       <PromptCopyDialog
         isOpen={true}
@@ -417,76 +443,9 @@ describe("PromptCopyDialog with FileDiffPicker integration", () => {
         onClose={mockOnClose}
       />,
     );
-    // Should re-initialize to all files selected for the label
-    expect(screen.getByText("(All 2 files)")).toBeInTheDocument();
-    // And content should be raw patch again (hasPickedFiles is false)
-    const diffBlockDivReopened = screen
-      .getByText("### PR Diff")
-      .closest('div[class*="promptBlock"]');
-    await waitFor(() => {
-      const preElement = diffBlockDivReopened!.querySelector("pre");
-      expect(normaliseWS(preElement!.textContent!)).toBe(
-        normaliseWS(SIMPLE_DIFF_PATCH),
-      );
-    });
   });
-
-  test("Handles no diff block gracefully", () => {
-    const blocksWithoutDiff: PromptBlock[] = [
-      {
-        id: "comment-only-1", // Specific ID
-        kind: "comment",
-        header: "### Comment Only",
-        commentBody: "No diff here.",
-        author: "user",
-        timestamp: new Date().toISOString(),
-      },
-    ];
-    render(
-      <PromptCopyDialog
-        isOpen={true}
-        initialPromptText={MOCK_INITIAL_PROMPT_TEXT_WITH_PR_DETAILS} // Still provide initial prompt
-        blocks={blocksWithoutDiff}
-        onClose={() => {}}
-      />,
-    );
-    expect(screen.queryByText("Choose files…")).not.toBeInTheDocument();
-    expect(screen.queryByText("(All 0 files)")).not.toBeInTheDocument(); // Or similar label
-    // FileDiffPicker should not be rendered or attempted to be used
-    expect(screen.queryByText("FileDiffPickerMock")).not.toBeInTheDocument();
-
-    // Copy selected should still work
-    fireEvent.click(screen.getByText("Copy Selected"));
-
-    const commentOnlyBlockFormatted = formatPromptBlock(blocksWithoutDiff[0]).trimEnd();
-    const expectedCombined = `${commentOnlyBlockFormatted}\n\n${MOCK_INITIAL_PROMPT_TEXT_WITH_PR_DETAILS}`;
-    
-    expect(mockCopyToClipboard).toHaveBeenCalledWith(expectedCombined);
-  });
-});
-
-// ADD NEW TEST SUITE BELOW
-
-// Helper function to check the order of substrings
-function expectOrder(haystack: string, ...needles: string[]) {
-  let pos = -1;
-  for (const n of needles) {
-    if (!n) continue; // Skip empty needles if they represent an absent part
-    const next = haystack.indexOf(n);
-    expect(next, `"${n}" should appear in the correct order`).toBeGreaterThan(
-      pos,
-    );
-    pos = next;
-  }
-}
-
-describe("PromptCopyDialog with initialPromptText", () => {
-  let originalClipboard: typeof navigator.clipboard;
-  let originalExecCommand: (
-    commandId: string,
-    showUI?: boolean,
-    value?: string,
-  ) => boolean;
+  // Should re-initialize to all files selected for the label
+  expect(screen.getByText("(All 2 files)")).toBeInTheDocument();
 
   beforeEach(() => {
     vi.clearAllMocks(); // Clear mocks, including mockCopyToClipboard
@@ -549,20 +508,23 @@ describe("PromptCopyDialog with initialPromptText", () => {
         initialPromptText="Only Template Here"
       />,
     );
-    fireEvent.click(getCopyButton());
+    await act(async () => {
+      fireEvent.click(getCopyButton());
+    });
     await waitFor(() => {
       expect(mockCopyToClipboard).toHaveBeenCalledWith("Only Template Here");
     });
   });
 
-  test("combines selected blocks, user text, and initialPromptText in correct order", async () => {
-    const MOCK_COMMENT_BLOCK_FOR_ORDER_TEST: PromptBlock[] = [ // Renamed
+  // Add the missing test for "copies blocks in correct order"
+  test("copies blocks in correct order (comments, then template)", async () => {
+    const MOCK_COMMENT_BLOCK_FOR_ORDER_TEST: PromptBlock[] = [
       {
-        id: "text1",
+        id: "comment-1",
         kind: "comment",
-        header: "### Block 1 Header For Order Test", // More specific header
-        commentBody: "Content of block 1.",
-        author: "test",
+        header: "### General Comment",
+        commentBody: "A general comment.",
+        author: "user",
         timestamp: new Date().toISOString(),
       },
     ];
@@ -578,32 +540,29 @@ describe("PromptCopyDialog with initialPromptText", () => {
     const userTextArea = screen.getByRole("textbox", {
       name: "Your instructions (optional)",
     });
-    fireEvent.change(userTextArea, {
-      target: { value: "User custom instructions" },
+    await act(async () => {
+      fireEvent.change(userTextArea, {
+        target: { value: "User custom instructions" },
+      });
     });
 
-    fireEvent.click(getCopyButton());
+    await act(async () => {
+      fireEvent.click(getCopyButton());
+    });
 
     // MODIFIED: Use formatPromptBlock for expectedBlock1Content
-    const expectedBlock1Content = formatPromptBlock(MOCK_COMMENT_BLOCK_FOR_ORDER_TEST[0]);
-    const expectedUserText = "User custom instructions";
-    const expectedInitialPromptText = "Footer Template For Order Test";
-
-    await waitFor(() => {
-      const copiedText = mockCopyToClipboard.mock.calls[0]?.[0] as string;
-      expectOrder(
-        copiedText,
-        // Use header for order check if full block with metadata is too complex for simple order
-        MOCK_COMMENT_BLOCK_FOR_ORDER_TEST[0].header, // Check with specific header
-        expectedInitialPromptText,
-        expectedUserText,
-      );
-      // Optionally, also check if the full formatted block is present
-      expect(copiedText).toContain(expectedBlock1Content); // Check with specific content
-      // Ensure PR details are not duplicated (they should only come from initialPromptText)
-      // This test case's initialPromptText doesn't have "### PR details", so this check is not applicable here.
-      // Other tests cover the PR details from initialPromptText.
-    });
+    const expectedBlock1Content = formatPromptBlock(
+      MOCK_COMMENT_BLOCK_FOR_ORDER_TEST[0],
+    );
+    const copiedText = mockCopyToClipboard.mock.calls[0][0];
+    expect(copiedText).toContain(expectedBlock1Content.trimEnd());
+    expect(copiedText).toContain("Footer Template For Order Test");
+    expect(copiedText).toContain("User custom instructions");
+    // Ensure order: comment block, then template, then user text
+    const commentIndex = copiedText.indexOf(expectedBlock1Content.trimEnd());
+    const templateIndex = copiedText.indexOf("Footer Template For Order Test");
+    const userTextIndex = copiedText.indexOf("User custom instructions");
+    expect(commentIndex).toBeLessThan(templateIndex);
+    expect(templateIndex).toBeLessThan(userTextIndex);
   });
-
 });

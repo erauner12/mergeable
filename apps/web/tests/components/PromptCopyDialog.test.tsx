@@ -4,14 +4,14 @@ import {
   render,
   screen,
   waitFor,
-} from "@testing-library/react"; // ADDED act
+} from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { PromptCopyDialog } from "../../src/components/PromptCopyDialog";
 import * as DiffUtils from "../../src/lib/github/diffUtils"; // To mock buildClipboardPayload
 import type { PromptBlock } from "../../src/lib/repoprompt";
-import { formatPromptBlock } from "../../src/lib/repoprompt"; // ADDED IMPORT
-import { SECTION_SEPARATOR } from "../../src/lib/utils/promptFormat"; // ADDED IMPORT
-import { normaliseWS } from "../testingUtils"; // ADDED IMPORT
+import { formatPromptBlock } from "../../src/lib/repoprompt";
+import { SECTION_SEPARATOR } from "../../src/lib/utils/promptFormat";
+import { normaliseWS } from "../testingUtils";
 
 // Define the placeholder text as used in tests and mock data
 const DIFF_PLACEHOLDER_TEXT_IN_TEST =
@@ -30,6 +30,7 @@ vi.mock("../../src/components/FileDiffPicker", () => ({
         <span>FileDiffPickerMock</span>
         <p>Title: {title}</p>
         <button
+          data-testid="picker-confirm-1-file" // Added testid
           onClick={() =>
             onConfirm(
               new Set(files.slice(0, 1).map((f: { path: string }) => f.path)),
@@ -39,6 +40,7 @@ vi.mock("../../src/components/FileDiffPicker", () => ({
           Confirm Picker (1 file)
         </button>
         <button
+          data-testid="picker-confirm-all-files" // Added testid
           onClick={() =>
             onConfirm(new Set(files.map((f: { path: string }) => f.path)))
           }
@@ -191,7 +193,8 @@ describe("PromptCopyDialog with FileDiffPicker integration", () => {
       screen.getByText("Title: Choose files for: My Awesome PR"),
     ).toBeInTheDocument();
 
-    fireEvent.click(screen.getByText("Confirm Picker (1 file)"));
+    // fireEvent.click(screen.getByText("Confirm Picker (1 file)")); // OLD
+    fireEvent.click(screen.getByTestId("picker-confirm-1-file")); // NEW
 
     await waitFor(() => {
       expect(screen.queryByText("FileDiffPickerMock")).not.toBeInTheDocument();
@@ -219,7 +222,8 @@ describe("PromptCopyDialog with FileDiffPicker integration", () => {
       fireEvent.click(screen.getByTestId("choose-files-diff-1"));
     });
     await act(async () => {
-      fireEvent.click(screen.getByText("Confirm Picker (1 file)"));
+      // fireEvent.click(screen.getByText("Confirm Picker (1 file)")); // OLD
+      fireEvent.click(screen.getByTestId("picker-confirm-1-file")); // NEW
     });
     await waitFor(() =>
       expect(screen.queryByText("FileDiffPickerMock")).not.toBeInTheDocument(),
@@ -336,7 +340,8 @@ describe("PromptCopyDialog with FileDiffPicker integration", () => {
       fireEvent.click(screen.getByTestId("choose-files-diff-1"));
     });
     await act(async () => {
-      fireEvent.click(screen.getByText("Confirm Picker (1 file)"));
+      // fireEvent.click(screen.getByText("Confirm Picker (1 file)")); // OLD
+      fireEvent.click(screen.getByTestId("picker-confirm-1-file")); // NEW
     });
     await waitFor(() =>
       expect(screen.queryByText("FileDiffPickerMock")).not.toBeInTheDocument(),
@@ -371,7 +376,8 @@ describe("PromptCopyDialog with FileDiffPicker integration", () => {
       fireEvent.click(screen.getByTestId("choose-files-diff-1"));
     });
     await act(async () => {
-      fireEvent.click(screen.getByText("Confirm Picker (1 file)"));
+      // fireEvent.click(screen.getByText("Confirm Picker (1 file)")); // OLD
+      fireEvent.click(screen.getByTestId("picker-confirm-1-file")); // NEW
     });
     await waitFor(() =>
       expect(screen.getByText("(1 of 2 files)")).toBeInTheDocument(),
@@ -382,30 +388,27 @@ describe("PromptCopyDialog with FileDiffPicker integration", () => {
       DiffUtils,
       "buildClipboardPayload",
     );
-    // .mockReturnValue("PICKED_FILES_PAYLOAD"); // Old mock
-    // The actual payload for one file (e.g., file1.txt)
     const allPatchesData = DiffUtils.splitUnifiedDiff(SIMPLE_DIFF_PATCH);
     const expectedRawDiffForFile1 = allPatchesData["file1.txt"].patch.trim();
     buildClipboardPayloadSpy.mockReturnValue(expectedRawDiffForFile1);
 
     // Force a re-render to ensure the content updates if it hadn't already fully processed
-    await act(async () => {
-      rerender(
-        <PromptCopyDialog
-          isOpen={true}
-          initialPromptText={MOCK_INITIAL_PROMPT_TEXT_WITH_PR_DETAILS}
-          blocks={MOCK_BLOCKS_WITH_DIFF_NO_PR_DETAILS}
-          onClose={mockOnClose}
-        />,
-      );
-    });
+    // REMOVED: This rerender might have been a hack. State updates should handle it.
+    // await act(async () => {
+    //   rerender(
+    //     <PromptCopyDialog
+    //       isOpen={true}
+    //       initialPromptText={MOCK_INITIAL_PROMPT_TEXT_WITH_PR_DETAILS}
+    //       blocks={MOCK_BLOCKS_WITH_DIFF_NO_PR_DETAILS}
+    //       onClose={mockOnClose}
+    //     />,
+    //   );
+    // });
     await waitFor(() => {
       const diffBlockDiv = screen
         .getByText("### PR Diff")
         .closest('div[class*="promptBlock"]');
       const preElement = diffBlockDiv!.querySelector("pre");
-      // expect(preElement).toHaveTextContent("PICKED_FILES_PAYLOAD"); // Old assertion
-      // expect(preElement).toHaveTextContent(expectedRawDiffForFile1); // Previous assertion
       expect(normaliseWS(preElement!.textContent!)).toBe(
         normaliseWS(expectedRawDiffForFile1),
       );
@@ -810,5 +813,99 @@ describe("PromptCopyDialog with FileDiffPicker integration", () => {
 
     expect(diffHeaderIdx).toBeLessThan(diffPayloadIdx);
     expect(diffPayloadIdx).toBeLessThan(commentsIdx);
+  });
+
+  // NEW TEST as per plan
+  test("copies only selected files when FileDiffPicker selection is made", async () => {
+    const buildClipboardPayloadSpy = vi.spyOn(
+      DiffUtils,
+      "buildClipboardPayload",
+    );
+
+    render(
+      <PromptCopyDialog
+        isOpen={true}
+        initialPromptText={MOCK_INITIAL_PROMPT_TEXT_WITH_PR_DETAILS} // Contains placeholder
+        blocks={MOCK_BLOCKS_WITH_DIFF_NO_PR_DETAILS} // Contains diff with file1.txt and file2.txt
+        onClose={() => {}}
+      />,
+    );
+
+    // 1. Open FileDiffPicker
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("choose-files-diff-1"));
+    });
+    expect(screen.getByText("FileDiffPickerMock")).toBeInTheDocument();
+
+    // 2. Simulate FileDiffPicker confirming selection of only "file1.txt"
+    // The mock FileDiffPicker's "Confirm Picker (1 file)" button does this.
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("picker-confirm-1-file"));
+    });
+    await waitFor(() => {
+      expect(screen.queryByText("FileDiffPickerMock")).not.toBeInTheDocument();
+      // Label should update to show 1 of 2 files selected
+      expect(screen.getByText("(1 of 2 files)")).toBeInTheDocument();
+    });
+
+    // 3. Click "Copy Selected"
+    await act(async () => {
+      fireEvent.click(getCopyButton());
+    });
+
+    await waitFor(() => {
+      expect(mockCopyToClipboard).toHaveBeenCalled();
+    });
+
+    // 4. Assertions
+    // buildClipboardPayload should have been called with only "file1.txt" selected
+    expect(buildClipboardPayloadSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        selectedFiles: new Set(["file1.txt"]), // Only file1.txt
+        allFiles: ["file1.txt", "file2.txt"],
+        patches: expect.any(Object),
+      }),
+    );
+
+    const copiedText = mockCopyToClipboard.mock.calls[0][0];
+    const allPatchesData = DiffUtils.splitUnifiedDiff(SIMPLE_DIFF_PATCH);
+    const file1DiffContent = allPatchesData["file1.txt"].patch;
+    const file2DiffContent = allPatchesData["file2.txt"].patch;
+
+    // Copied text should contain content from file1.txt's diff
+    expect(copiedText).toContain(file1DiffContent.match(/\+content1/)![0]); // A unique part of file1.txt diff
+
+    // Copied text should NOT contain content from file2.txt's diff
+    expect(copiedText).not.toContain(file2DiffContent.match(/\+content2/)![0]); // A unique part of file2.txt diff
+
+    // Placeholder should be replaced
+    expect(copiedText).not.toContain(DIFF_PLACEHOLDER_TEXT_IN_TEST);
+
+    // Other selected blocks (comments) should still be present
+    const generalCommentBlock = MOCK_BLOCKS_WITH_DIFF_NO_PR_DETAILS.find(
+      (b) => b.id === "comment-1",
+    )!;
+    const anotherCommentBlock = MOCK_BLOCKS_WITH_DIFF_NO_PR_DETAILS.find(
+      (b) => b.id === "comment-2",
+    )!;
+    const commentsContent = [
+      formatPromptBlock(generalCommentBlock).trimEnd(),
+      formatPromptBlock(anotherCommentBlock).trimEnd(),
+    ].join(SECTION_SEPARATOR);
+
+    // Verify the overall structure
+    const templateWithFile1DiffInjected =
+      MOCK_INITIAL_PROMPT_TEXT_WITH_PR_DETAILS.replace(
+        DIFF_PLACEHOLDER_TEXT_IN_TEST,
+        file1DiffContent.trimEnd(), // buildClipboardPayload for a single file returns its patch
+      ).trimEnd();
+
+    const EXPECTED_PROMPT = [templateWithFile1DiffInjected, commentsContent]
+      .join(SECTION_SEPARATOR)
+      .trimEnd();
+
+    expect(normaliseWS(copiedText)).toBe(normaliseWS(EXPECTED_PROMPT));
+
+    buildClipboardPayloadSpy.mockRestore();
   });
 });

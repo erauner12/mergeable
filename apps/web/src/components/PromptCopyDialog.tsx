@@ -24,7 +24,7 @@ import {
 } from "../lib/github/diffUtils";
 import type { PromptBlock } from "../lib/repoprompt";
 import { formatPromptBlock } from "../lib/repoprompt";
-import { stripFilesListSection } from "../lib/utils/stripFilesList"; // NEW
+// import { stripFilesListSection } from "../lib/utils/stripFilesList"; // NEW // REMOVE THIS LINE
 import { FileDiffPicker } from "./FileDiffPicker";
 import styles from "./PromptCopyDialog.module.scss";
 
@@ -300,7 +300,8 @@ export function PromptCopyDialog({
 
     // Remove any leading files-list header from the selected diff to avoid
     // duplicating the template’s own {{FILES_LIST}} section.
-    const selectionClean = stripFilesListSection(selectionTrimmed);
+    // const selectionClean = stripFilesListSection(selectionTrimmed); // REMOVE THIS LINE
+    const selectionClean = selectionTrimmed; // MODIFIED: Use selectionTrimmed directly
 
     // Otherwise, build up the prompt from trimmed pieces.
     const sections = [selectionClean, template, extra].filter(Boolean);

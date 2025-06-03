@@ -1,4 +1,9 @@
 /// <reference types="vitest/globals" />
+// ADD: Import the shared mock helper. Should be one of the first imports.
+import "../__mocks__/templates.mock";
+// ADD: Import utilities from the shared mock.
+import { setMockTemplateBody } from "../__mocks__/templates.mock";
+
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PullRequestCommit } from "../../src/lib/github/client"; // Import renamed type
 import * as gh from "../../src/lib/github/client"; // ← stub network call
@@ -14,7 +19,8 @@ import {
 } from "../../src/lib/repoprompt";
 import { isDiffBlock } from "../../src/lib/repoprompt.guards";
 import * as settings from "../../src/lib/settings"; // Keep for getDefaultRoot
-import type { TemplateMeta } from "../../src/lib/templates"; // Import TemplateMeta type
+// REMOVE: import type { TemplateMeta } from "../../src/lib/templates"; // No longer needed directly here, or covered by mock
+// Import * as templates will now correctly point to the mocked module
 import { mockPull } from "../testing";
 
 // Mock renderTemplate to check its inputs and control its output
@@ -53,38 +59,11 @@ vi.mock("../../src/lib/github/client", async (importOriginal) => {
   };
 });
 
-// Mock templates.templateMap
-let mockTemplateMapInstance: Record<PromptMode, { body: string; meta: TemplateMeta }>;
-let actualAnalyseTemplateFn: (tpl: string) => TemplateMeta; // Keep for test-specific dynamic meta if needed
-
-// Define a simple default meta object for the mock
-const mockDefaultMeta: TemplateMeta = {
-  expectsFilesList: true, // Default to true for broad testing, can be overridden per test
-  expectsDiffContent: true, // Default to true
-  expectsSetup: true,
-  expectsLink: true,
-  expectsPrDetails: true,
-  expectsPrDetailsBlock: false, // Default to not expecting this one
-};
-
-vi.mock("../../src/lib/templates", async () => {
-  const actualTemplates = await vi.importActual<typeof import("../../src/lib/templates")>("../../src/lib/templates");
-  actualAnalyseTemplateFn = actualTemplates.analyseTemplate; // Capture for potential use in tests
-
-  // Initialize with default structure that tests can override
-  // Use a simple, predefined meta object here to avoid issues with `actualAnalyseTemplateFn` during hoisting
-  mockTemplateMapInstance = {
-    implement: { body: "mock implement body", meta: { ...mockDefaultMeta } },
-    review: { body: "mock review body", meta: { ...mockDefaultMeta } },
-    "adjust-pr": { body: "mock adjust-pr body", meta: { ...mockDefaultMeta } },
-    respond: { body: "mock respond body", meta: { ...mockDefaultMeta } },
-  };
-  return {
-    // Spread actualTemplates to ensure other exports from templates.ts (like analyseTemplate itself) are available if tests import them directly
-    ...actualTemplates,
-    templateMap: mockTemplateMapInstance,
-  };
-});
+// REMOVE: Mock templates.templateMap (mockTemplateMapInstance, actualAnalyseTemplateFn, mockDefaultMeta)
+// let mockTemplateMapInstance: Record<PromptMode, { body: string; meta: TemplateMeta }>;
+// let actualAnalyseTemplateFn: (tpl: string) => TemplateMeta;
+// const mockDefaultMeta: TemplateMeta = { ... };
+// vi.mock("../../src/lib/templates", async () => { ... });
 
 describe("buildRepoPromptUrl", () => {
   beforeEach(() => {
@@ -180,16 +159,14 @@ describe("buildRepoPromptText", () => {
       "dummy commit diff content",
     );
 
-    // Setup default mock for templateMap for each test run
+    // Setup default templates for this suite using the shared mock helper
     const defaultTemplateBodyForMode = (mode: PromptMode) =>
       `MODE ${mode.toUpperCase()} TEMPLATE:\nSETUP:\n{{SETUP}}\nPR_DETAILS:\n{{PR_DETAILS}}\nFILES_LIST:\n{{FILES_LIST}}\nDIFF_CONTENT:\n{{DIFF_CONTENT}}\nLINK:\n{{LINK}}`;
-    for (const mode in mockTemplateMapInstance) {
-      const body = defaultTemplateBodyForMode(mode as PromptMode);
-      mockTemplateMapInstance[mode as PromptMode] = {
-        body: body,
-        meta: actualAnalyseTemplateFn(body),
-      };
-    }
+    
+    setMockTemplateBody("implement", defaultTemplateBodyForMode("implement"));
+    setMockTemplateBody("review", defaultTemplateBodyForMode("review"));
+    setMockTemplateBody("adjust-pr", defaultTemplateBodyForMode("adjust-pr"));
+    setMockTemplateBody("respond", defaultTemplateBodyForMode("respond"));
   });
 
   afterEach(() => {
@@ -218,10 +195,8 @@ describe("buildRepoPromptText", () => {
     // Configure templateMap for this test if specific meta needed (e.g. expectsFilesList = true)
     const currentMode = defaultPromptMode;
     const templateBody = `MODE ${currentMode.toUpperCase()} TEMPLATE:\n{{SETUP}}\n{{PR_DETAILS}}\n{{FILES_LIST}}\n{{DIFF_CONTENT}}\n{{LINK}}`;
-    mockTemplateMapInstance[currentMode] = {
-      body: templateBody,
-      meta: actualAnalyseTemplateFn(templateBody), // Ensures expectsFilesList is true
-    };
+    // Use setMockTemplateBody to update the template. Meta is auto-generated.
+    setMockTemplateBody(currentMode, templateBody);
 
     const { promptText } = await buildRepoPromptText(
       pull,
@@ -391,11 +366,22 @@ More PR body text.`;
     beforeEach(() => {
       // Reset getPromptTemplateSpy to a generic template for these specific tests
       // to control presence of {{FILES_LIST}} token.
+      // This spy on settings.getPromptTemplate is separate from the templates.templateMap mock.
+      // If the SUT (buildRepoPromptText) calls settings.getPromptTemplate, this spy will intercept.
+      // The shared mock for templates.templateMap is used when settings.getPromptTemplate falls back to defaults.
       vi.spyOn(settings, "getPromptTemplate").mockImplementation(
-        (_mode: PromptMode) =>
-          Promise.resolve(
-            `{{SETUP}}\n{{PR_DETAILS}}\n{{FILES_LIST}}\n{{DIFF_CONTENT}}\n{{LINK}}`,
-          ),
+        (_mode: PromptMode) => {
+          // For these tests, we want buildRepoPromptText to receive a specific template string.
+          // This string will be analyzed by the *actual* analyseTemplate via the mocked templates.templateMap
+          // if getPromptTemplate internally uses it, OR if buildRepoPromptText gets it directly.
+          // The key is that the template string used by buildRepoPromptText should be this one.
+          const specificTemplateForTest = `{{SETUP}}\n{{PR_DETAILS}}\n{{FILES_LIST}}\n{{DIFF_CONTENT}}\n{{LINK}}`;
+          // To ensure buildRepoPromptText uses this, we can also use setMockTemplateBody.
+          // However, buildRepoPromptText calls settings.getPromptTemplate(mode).
+          // So, this spy is the most direct way to control what template string buildRepoPromptText receives.
+          setMockTemplateBody(defaultPromptMode, specificTemplateForTest); // Ensure the mock map reflects this too for consistency if accessed.
+          return Promise.resolve(specificTemplateForTest);
+        }
       );
     });
 
@@ -506,9 +492,13 @@ More PR body text.`;
 
     it("overall prompt should never contain duplicated 'files changed' sections", async () => {
       // This test uses a specific template to ensure all relevant tokens are present
+      // The spy on settings.getPromptTemplate is crucial here.
       vi.spyOn(settings, "getPromptTemplate").mockResolvedValue(
         `{{SETUP}}\nPR_INFO:\n{{PR_DETAILS}}\nFILES_EXPLICIT:\n{{FILES_LIST}}\nDIFFS:\n{{DIFF_CONTENT}}\n{{LINK}}`,
       );
+      // Additionally, ensure the shared mock reflects this if any code path accesses templateMap directly for this mode.
+      setMockTemplateBody(defaultPromptMode, `{{SETUP}}\nPR_INFO:\n{{PR_DETAILS}}\nFILES_EXPLICIT:\n{{FILES_LIST}}\nDIFFS:\n{{DIFF_CONTENT}}\n{{LINK}}`);
+
       const pullWithBodyList = mockPull({
         body: prBodyWithFilesList,
         files: [],
@@ -976,13 +966,10 @@ More PR body text.`;
 
     test("should replace {{prDetailsBlock}} token with PR details content (non-standard template)", async () => {
       const body = "System Preamble.\n{{prDetailsBlock}}\nSystem Postamble.";
-      mockTemplateMapInstance[defaultPromptMode] = {
-        body,
-        meta: actualAnalyseTemplateFn(body),
-      };
-      // This template is not "standard" because it's missing SETUP, (PR_DETAILS), LINK from meta perspective.
-      // analyseTemplate will set expectsPrDetailsBlock = true, expectsPrDetails = false, expectsSetup = false, expectsLink = false.
-      // isStandardTemplate will be false.
+      // Use setMockTemplateBody to set the template for the current mode.
+      setMockTemplateBody(defaultPromptMode, body);
+      // The meta will be derived by the actualAnalyseTemplate in the shared mock.
+      // Old: mockTemplateMapInstance[defaultPromptMode] = { body, meta: actualAnalyseTemplateFn(body) };
 
       const { promptText } = await buildRepoPromptText(
         pull,
@@ -1019,11 +1006,8 @@ More PR body text.`;
 
     test("should replace {{PR_DETAILS}} token with PR details content (non-standard template)", async () => {
       const body = "System Preamble.\n{{PR_DETAILS}}\nSystem Postamble.";
-      mockTemplateMapInstance[defaultPromptMode] = {
-        body,
-        meta: actualAnalyseTemplateFn(body),
-      };
-      // isStandardTemplate will be false.
+      setMockTemplateBody(defaultPromptMode, body);
+      // Old: mockTemplateMapInstance[defaultPromptMode] = { body, meta: actualAnalyseTemplateFn(body) };
 
       const { promptText } = await buildRepoPromptText(
         pull,
@@ -1060,11 +1044,8 @@ More PR body text.`;
     test("should handle both {{PR_DETAILS}} and {{prDetailsBlock}} tokens, rendering PR details only once (standard template)", async () => {
       const body =
         "{{SETUP}}\n{{PR_DETAILS}}\nAlso here: {{prDetailsBlock}}\n{{LINK}}";
-      mockTemplateMapInstance[defaultPromptMode] = {
-        body,
-        meta: actualAnalyseTemplateFn(body),
-      };
-      // isStandardTemplate will be true.
+      setMockTemplateBody(defaultPromptMode, body);
+      // Old: mockTemplateMapInstance[defaultPromptMode] = { body, meta: actualAnalyseTemplateFn(body) };
 
       const { promptText } = await buildRepoPromptText(
         pull,
@@ -1098,11 +1079,8 @@ More PR body text.`;
 
     test("should append PR details content if no PR token is present in template (non-standard)", async () => {
       const body = "Base prompt without token."; // No PR_DETAILS or prDetailsBlock
-      mockTemplateMapInstance[defaultPromptMode] = {
-        body,
-        meta: actualAnalyseTemplateFn(body),
-      };
-      // isStandardTemplate will be false. userHandledPrDetails will be false.
+      setMockTemplateBody(defaultPromptMode, body);
+      // Old: mockTemplateMapInstance[defaultPromptMode] = { body, meta: actualAnalyseTemplateFn(body) };
 
       const { promptText } = await buildRepoPromptText(
         pull,

@@ -272,59 +272,75 @@ export function PromptCopyDialog({
     });
   };
 
-  const currentSelectedText = useMemo(() => {
-    const resultParts = blocks
-      .filter((block) => selectedIds.has(block.id))
-      .map((block) => {
-        if (
-          block.kind === "diff" &&
-          diffPatchData &&
-          block.id === diffPatchData.sourceBlockId &&
-          selectedIds.has(block.id)
-        ) {
-          return buildClipboardPayload({
-            selectedFiles: selectedFilePaths,
-            allFiles: diffPatchData.allFilePaths,
-            patches: diffPatchData.patches,
-          });
-        }
-        // DEBUG: Log the block and result
-        console.log(
-          "DEBUG currentSelectedText: block =",
-          JSON.stringify(block),
-        );
-        const formatted = formatPromptBlock(block);
-        console.log(
-          "DEBUG currentSelectedText: formatPromptBlock result =",
-          JSON.stringify(formatted),
-        );
-        return formatted;
-      });
-    const result = joinBlocks(resultParts);
-    console.log(
-      "DEBUG currentSelectedText: final result =",
-      JSON.stringify(result),
+  // ADD NEW useMemo hooks here
+  const selectedDiffBlock = useMemo(() => {
+    return blocks.find((b) => b.kind === "diff" && selectedIds.has(b.id));
+  }, [blocks, selectedIds]);
+
+  const selectedNonDiffText = useMemo(() => {
+    return joinBlocks(
+      blocks
+        .filter((b) => selectedIds.has(b.id) && b.id !== selectedDiffBlock?.id)
+        .map(formatPromptBlock),
     );
-    return result;
-  }, [blocks, selectedIds, diffPatchData, selectedFilePaths]);
+  }, [blocks, selectedIds, selectedDiffBlock]);
+
+  const diffPayload = useMemo(() => {
+    if (!selectedDiffBlock || !diffPatchData) {
+      // selectedDiffBlock implies it's in selectedIds
+      return "";
+    }
+    // Ensure diffPatchData corresponds to the selectedDiffBlock
+    if (diffPatchData.sourceBlockId !== selectedDiffBlock.id) {
+      // This might happen if diffPatchData is stale or logic error.
+      // Safest to return empty string for diff content in this case.
+      console.warn(
+        "PromptCopyDialog: Mismatch between selectedDiffBlock and diffPatchData.sourceBlockId.",
+      );
+      return "";
+    }
+
+    return buildClipboardPayload({
+      selectedFiles: selectedFilePaths,
+      allFiles: diffPatchData.allFilePaths,
+      patches: diffPatchData.patches,
+    }).trimEnd();
+  }, [selectedDiffBlock, diffPatchData, selectedFilePaths]);
+  // END ADD NEW useMemo hooks
 
   // Refactored: Use injectSelectionIntoTemplate for prompt assembly
   const getFinalPrompt = (): string => {
     const template = initialPromptText.trim();
-    const selectionClean = currentSelectedText.trimEnd();
     const extra = userText.trim();
 
-    if (selectionClean) {
-      const { injected, result: injectedTemplate } =
-        injectSelectionIntoTemplate(template, selectionClean);
-      if (injected) {
-        // Injected selected content into the template
-        return joinBlocks([injectedTemplate, extra].filter(Boolean)).trimEnd();
+    if (selectedIds.size > 0) {
+      // Build the selected content from non-diff blocks and diff payload
+      const selectionParts = [];
+      if (selectedNonDiffText) {
+        selectionParts.push(selectedNonDiffText);
+      }
+      if (diffPayload) {
+        selectionParts.push(diffPayload);
+      }
+      const selectionClean = joinBlocks(selectionParts).trimEnd();
+
+      if (template) {
+        const { injected, result: injectedTemplate } =
+          injectSelectionIntoTemplate(template, selectionClean);
+        if (injected) {
+          // Injected selected content into the template
+          return joinBlocks(
+            [injectedTemplate, extra].filter(Boolean),
+          ).trimEnd();
+        } else {
+          // Fallback: template first, then selected content, then extra text
+          return joinBlocks(
+            [template, selectionClean, extra].filter(Boolean),
+          ).trimEnd();
+        }
       } else {
-        // Fallback: template first, then selected content, then extra text
-        return joinBlocks(
-          [template, selectionClean, extra].filter(Boolean),
-        ).trimEnd();
+        // No template, just selected content and extra text
+        return joinBlocks([selectionClean, extra].filter(Boolean)).trimEnd();
       }
     } else {
       // No selected blocks, just template and extra text

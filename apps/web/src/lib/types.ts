@@ -68,3 +68,5 @@ export type Connection = ConnectionProps & {
 export type Star = {
   uid: string;
 };
+
+export type { PromptMode } from "./repoprompt";

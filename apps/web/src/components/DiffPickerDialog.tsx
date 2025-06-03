@@ -1,14 +1,38 @@
-import { Button, Checkbox, Dialog, DialogBody, DialogFooter, Intent } from "@blueprintjs/core";
+import {
+  Button,
+  Checkbox,
+  Dialog,
+  DialogBody,
+  DialogFooter,
+  Intent,
+  Radio,
+  RadioGroup,
+} from "@blueprintjs/core"; // Added RadioGroup, Radio
 import { useEffect, useState } from "react";
-import type { DiffOptions } from "../lib/repoprompt";
+import type { DiffOptions, PromptMode } from "../lib/repoprompt"; // Added PromptMode
+import { defaultPromptMode } from "../lib/repoprompt"; // Added defaultPromptMode
+
+// New result type
+export interface DiffPickerResult {
+  diffOpts: DiffOptions;
+  mode: PromptMode;
+}
 
 export interface DiffPickerDialogProps {
   isOpen: boolean;
   initial?: DiffOptions;
-  onConfirm: (opts: DiffOptions) => void;
+  onConfirm: (result: DiffPickerResult) => void; // Updated signature
   onCancel: () => void;
   prTitle?: string; // For dialog title
 }
+
+// Available prompt modes and their labels
+const promptModeOptions = [
+  { label: "Implement Changes", value: "implement" as PromptMode },
+  { label: "Review Code", value: "review" as PromptMode },
+  { label: "Adjust PR Description", value: "adjust-pr" as PromptMode },
+  { label: "Respond to Comments", value: "respond" as PromptMode },
+];
 
 export function DiffPickerDialog({
   isOpen,
@@ -19,27 +43,33 @@ export function DiffPickerDialog({
 }: DiffPickerDialogProps) {
   const [includePr, setIncludePr] = useState(true);
   const [includeLastCommit, setIncludeLastCommit] = useState(true);
-  const [includeComments, setIncludeComments] = useState(false); // New state
+  const [includeComments, setIncludeComments] = useState(false);
+  const [selectedMode, setSelectedMode] = useState<PromptMode>(() => {
+    const lastMode = localStorage.getItem("picker:lastMode");
+    return (lastMode as PromptMode) ?? defaultPromptMode;
+  });
 
   useEffect(() => {
     if (isOpen) {
-      // Reset state based on initial prop when dialog opens or initial prop changes
       setIncludePr(initial?.includePr ?? true);
       setIncludeLastCommit(initial?.includeLastCommit ?? true);
-      setIncludeComments(initial?.includeComments ?? false); // Reset new state
+      setIncludeComments(initial?.includeComments ?? false);
+      // Persist mode choice
+      localStorage.setItem("picker:lastMode", selectedMode);
     }
-  }, [isOpen, initial]);
+  }, [isOpen, initial, selectedMode]);
 
   const handleConfirm = () => {
-    onConfirm({
+    const diffOpts: DiffOptions = {
       includePr,
       includeLastCommit,
-      includeComments, // Pass new option
+      includeComments,
       commits: [], // Always pass an empty array for commits
-    });
+    };
+    onConfirm({ diffOpts, mode: selectedMode });
   };
 
-  const canConfirm = includePr || includeLastCommit || includeComments; // Updated validation
+  const canConfirm = includePr || includeLastCommit || includeComments;
 
   return (
     <Dialog
@@ -51,6 +81,17 @@ export function DiffPickerDialog({
     >
       <DialogBody>
         <p>Choose which diffs and comments to include in the prompt:</p>
+        <RadioGroup
+          label="Select Mode:"
+          selectedValue={selectedMode}
+          onChange={(e) => setSelectedMode(e.currentTarget.value as PromptMode)}
+          inline={true}
+          style={{ marginBottom: "15px" }}
+        >
+          {promptModeOptions.map((opt) => (
+            <Radio key={opt.value} label={opt.label} value={opt.value} />
+          ))}
+        </RadioGroup>
         <Checkbox
           label="Full PR diff"
           checked={includePr}

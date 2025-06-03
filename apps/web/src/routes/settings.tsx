@@ -1,4 +1,12 @@
-import { Button, Card, FormGroup, H3, InputGroup } from "@blueprintjs/core";
+import {
+  Button,
+  Card,
+  FormGroup,
+  H3,
+  HTMLSelect,
+  InputGroup,
+  TextArea,
+} from "@blueprintjs/core"; // Added HTMLSelect, TextArea
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router";
 import { isTruthy } from "remeda";
@@ -12,10 +20,24 @@ import {
   saveConnection,
 } from "../lib/mutations";
 import { useConnections } from "../lib/queries";
-import { getDefaultRoot, setDefaultRoot } from "../lib/settings";
+import type { PromptMode } from "../lib/repoprompt"; // Added PromptMode
+import { defaultPromptMode } from "../lib/repoprompt"; // Added defaultPromptMode
+import {
+  getDefaultRoot,
+  getPromptTemplate,
+  setDefaultRoot,
+  setPromptTemplate,
+} from "../lib/settings"; // Added getPromptTemplate, setPromptTemplate
 import { useToaster } from "../lib/toaster";
 import type { Connection, ConnectionProps } from "../lib/types";
 import styles from "./settings.module.scss";
+
+const promptModeOptions: { label: string; value: PromptMode }[] = [
+  { label: "Implement Changes", value: "implement" },
+  { label: "Review Code", value: "review" },
+  { label: "Adjust PR Description", value: "adjust-pr" },
+  { label: "Respond to Comments", value: "respond" },
+];
 
 export default function Settings() {
   const [isEditing, setEditing] = useState(false);
@@ -27,6 +49,19 @@ export default function Settings() {
   const [cloneRoot, setCloneRoot] = useState<string>("");
   const [initialCloneRoot, setInitialCloneRoot] = useState<string>("");
 
+  // State for prompt template editor
+  const [selectedPromptMode, setSelectedPromptMode] = useState<PromptMode>(
+    () => {
+      return (
+        (localStorage.getItem("settings:lastPromptMode") as PromptMode) ||
+        defaultPromptMode
+      );
+    },
+  );
+  const [currentPromptText, setCurrentPromptText] = useState<string>("");
+  const [initialPromptTextForMode, setInitialPromptTextForMode] =
+    useState<string>("");
+
   useEffect(() => {
     getDefaultRoot()
       .then((root: string) => {
@@ -35,6 +70,17 @@ export default function Settings() {
       })
       .catch(console.error);
   }, []);
+
+  // Effect for loading prompt template when mode changes
+  useEffect(() => {
+    getPromptTemplate(selectedPromptMode)
+      .then((template) => {
+        setCurrentPromptText(template);
+        setInitialPromptTextForMode(template);
+      })
+      .catch(console.error);
+    localStorage.setItem("settings:lastPromptMode", selectedPromptMode);
+  }, [selectedPromptMode]);
 
   const handleSaveCloneRoot = async () => {
     try {
@@ -48,6 +94,23 @@ export default function Settings() {
       console.error("Failed to save clone root:", error);
       toaster?.show({
         message: "Failed to save default clone root.",
+        intent: "danger",
+      });
+    }
+  };
+
+  const handleSavePromptTemplate = async () => {
+    try {
+      await setPromptTemplate(selectedPromptMode, currentPromptText);
+      setInitialPromptTextForMode(currentPromptText); // Update initial state on successful save
+      toaster?.show({
+        message: `Prompt template for "${promptModeOptions.find((o) => o.value === selectedPromptMode)?.label || selectedPromptMode}" mode saved.`,
+        intent: "success",
+      });
+    } catch (error) {
+      console.error("Failed to save prompt template:", error);
+      toaster?.show({
+        message: "Failed to save prompt template.",
         intent: "danger",
       });
     }
@@ -128,6 +191,50 @@ export default function Settings() {
             intent="primary"
             onClick={handleSaveCloneRoot}
             disabled={cloneRoot === initialCloneRoot}
+            className={styles.saveButton}
+          />
+        </Card>
+
+        <div className={styles.header}>
+          <H3 className={styles.title}>Prompt Templates</H3>
+        </div>
+        <Card className={styles.settingsCard}>
+          <FormGroup
+            label="Edit template for mode:"
+            labelFor="prompt-mode-select"
+            inline={true}
+            className={styles.formGroup}
+          >
+            <HTMLSelect
+              id="prompt-mode-select"
+              value={selectedPromptMode}
+              onChange={(e) =>
+                setSelectedPromptMode(e.target.value as PromptMode)
+              }
+              options={promptModeOptions}
+              className={styles.input} // Assuming similar styling to InputGroup
+            />
+          </FormGroup>
+          <FormGroup
+            label={`Template for "${promptModeOptions.find((o) => o.value === selectedPromptMode)?.label || selectedPromptMode}" mode`}
+            helperText="Customize the base prompt used for the selected mode."
+            labelFor="prompt-template-input"
+            className={styles.formGroup}
+          >
+            <TextArea
+              id="prompt-template-input"
+              value={currentPromptText}
+              onChange={(e) => setCurrentPromptText(e.target.value)}
+              fill={true}
+              rows={8}
+              className={styles.input} // Assuming similar styling
+            />
+          </FormGroup>
+          <Button
+            text="Save Prompt Template"
+            intent="primary"
+            onClick={handleSavePromptTemplate}
+            disabled={currentPromptText === initialPromptTextForMode}
             className={styles.saveButton}
           />
         </Card>

@@ -8,8 +8,10 @@ import {
 } from "./github/client";
 import type { Pull } from "./github/types";
 import { renderTemplate } from "./renderTemplate"; // ADDED: Import renderTemplate
-import { getDefaultRoot } from "./settings"; // Removed getPromptTemplate
-import { templateMap } from "./templates"; // Added templateMap import
+// import { getDefaultRoot } from "./settings"; // Removed getPromptTemplate // OLD
+// import { templateMap } from "./templates"; // Added templateMap import // OLD
+import * as settings from "./settings"; // ADD
+import * as templates from "./templates"; // ADD
 
 /**
  * Functions for building RepoPrompt URLs and prompt text.
@@ -198,7 +200,7 @@ export async function buildRepoPromptUrl(
   launchMode: LaunchMode = "workspace",
   endpoint?: Endpoint,
 ): Promise<{ url: string; resolvedMeta: ResolvedPullMeta }> {
-  const baseRoot = await getDefaultRoot();
+  const baseRoot = await settings.getDefaultRoot(); // UPDATED
   if (typeof baseRoot !== "string") {
     throw new Error("getDefaultRoot did not return a string value");
   }
@@ -297,7 +299,7 @@ export async function buildRepoPromptText(
     endpoint = endpointOrMeta as Endpoint | undefined;
     meta = maybeMeta;
   } else {
-    endpoint = modeOrEndpoint;
+    endpoint = modeOrEndpoint; // Cast to Endpoint | undefined
     meta = endpointOrMeta as ResolvedPullMeta | undefined;
   }
 
@@ -319,7 +321,25 @@ export async function buildRepoPromptText(
   const originalPrBody = pull.body?.trim() || "_No description provided._";
 
   // Calculate template and determine if FILES_LIST should be populated
-  const { body: mainTemplateString, meta: tplMeta } = templateMap[mode]; // Get template and its metadata
+  // const { body: mainTemplateString, meta: tplMeta } = templateMap[mode]; // OLD
+
+  let mainTemplateString: string;
+  let tplMeta: templates.TemplateMeta;
+
+  const userTemplateString = await settings.getPromptTemplate(mode);
+
+  if (userTemplateString !== undefined && userTemplateString !== null) {
+    mainTemplateString = userTemplateString;
+    tplMeta = templates.analyseTemplate(userTemplateString);
+  } else {
+    const defaultTemplate = templates.templateMap[mode];
+    if (!defaultTemplate) {
+      throw new Error(`No template found for mode: ${mode}`);
+    }
+    mainTemplateString = defaultTemplate.body;
+    tplMeta = defaultTemplate.meta;
+  }
+  // mainTemplateString and tplMeta are now set based on user settings or fallback.
 
   // Pre-calculate whether we'll have diff content based on options
   const willHaveDiffContentBasedOnOptions =

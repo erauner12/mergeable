@@ -57,7 +57,7 @@ export async function getBasePrompt(): Promise<string> {
   // This is tricky because templateMap.implement is the *full structure*.
   // For the purpose of testing legacy `setBasePrompt`, we'll keep it simple.
   // The actual default for "implement" mode's content is now within templateMap.implement.
-  return row?.value ?? templateMap.implement; // Fallback to full implement template for now.
+  return row?.value ?? templateMap.implement.body; // Fallback to full implement template for now.
 }
 
 export async function setBasePrompt(text: string): Promise<void> {
@@ -80,7 +80,7 @@ export async function getPromptTemplate(mode: PromptMode): Promise<string> {
   }
 
   // 3. Fallback to the default template from the loaded .md file
-  return templateMap[mode];
+  return templateMap[mode].body;
 }
 
 export async function setPromptTemplate(

@@ -8,7 +8,8 @@ import {
 } from "./github/client";
 import type { Pull } from "./github/types";
 import { renderTemplate } from "./renderTemplate"; // ADDED: Import renderTemplate
-import { getDefaultRoot, getPromptTemplate } from "./settings"; // Added getPromptTemplate
+import { getDefaultRoot } from "./settings"; // Removed getPromptTemplate
+import { templateMap } from "./templates"; // Added templateMap import
 
 /**
  * Functions for building RepoPrompt URLs and prompt text.
@@ -130,7 +131,10 @@ function formatDateUtcShort(ts: string): string {
  * Strip "files changed" sections from PR body text to prevent duplication.
  * Returns the cleaned body and whether a section was found.
  */
-function stripFilesListSection(body: string): { clean: string; hadSection: boolean } {
+function stripFilesListSection(body: string): {
+  clean: string;
+  hadSection: boolean;
+} {
   const regex = /^#{1,3}\s*files changed[^\n]*\n(?:- .*\n?)+/im;
   const had = regex.test(body);
   return { clean: body.replace(regex, "").trim(), hadSection: had };
@@ -315,8 +319,7 @@ export async function buildRepoPromptText(
   const originalPrBody = pull.body?.trim() || "_No description provided._";
 
   // Calculate template and determine if FILES_LIST should be populated
-  const mainTemplateString = await getPromptTemplate(mode); // Get template early
-  const hasFilesListToken = mainTemplateString.includes("{{FILES_LIST}}");
+  const { body: mainTemplateString, meta: tplMeta } = templateMap[mode]; // Get template and its metadata
 
   // Pre-calculate whether we'll have diff content based on options
   const willHaveDiffContentBasedOnOptions =
@@ -327,11 +330,12 @@ export async function buildRepoPromptText(
   let filesListString = "";
   let finalPrBodyForBlock = originalPrBody;
 
+  // Populate FILES_LIST slot if template expects it, files exist, and no primary diff content is being generated
   const shouldPopulateFilesListSlot =
-    hasFilesListToken &&
+    tplMeta.expectsFilesList &&
     meta.files &&
     meta.files.length > 0 &&
-    !willHaveDiffContentBasedOnOptions; // If diff content is expected, don't populate FILES_LIST
+    !willHaveDiffContentBasedOnOptions;
 
   if (shouldPopulateFilesListSlot) {
     const { clean } = stripFilesListSection(originalPrBody);
@@ -499,13 +503,8 @@ export async function buildRepoPromptText(
 
   const linkString = `🔗 ${pull.url.includes("/pull/") ? pull.url : `https://github.com/${owner}/${repo}/pull/${pull.number}`}`;
 
-  // Check if template contains the prDetailsBlock token
-  // const hasTokenInTemplate = mainTemplateString.includes("{{prDetailsBlock}}"); // This specific variable is no longer used directly in the old way.
-
   // Define how prDetailsBlock token is handled: it gets content only if PR_DETAILS token is NOT in the template.
-  const prDetailsContentForBlockToken = mainTemplateString.includes(
-    "{{PR_DETAILS}}",
-  )
+  const prDetailsContentForBlockToken = tplMeta.expectsPrDetails
     ? ""
     : prDetailsString;
 
@@ -521,17 +520,18 @@ export async function buildRepoPromptText(
 
   // Check if this is a "standard" template that handles its own structure
   const isStandardTemplate =
-    mainTemplateString.includes("{{SETUP}}") &&
-    (mainTemplateString.includes("{{PR_DETAILS}}") ||
-      mainTemplateString.includes("{{prDetailsBlock}}")) &&
-    mainTemplateString.includes("{{LINK}}");
+    tplMeta.expectsSetup &&
+    (tplMeta.expectsPrDetails || tplMeta.expectsPrDetailsBlock) &&
+    tplMeta.expectsLink;
 
   let promptText: string;
 
   if (isStandardTemplate) {
     // For standard templates, render with all slots and use the result directly.
     // renderTemplate will clean up any unused tokens or empty lines.
-    promptText = renderTemplate(mainTemplateString, allSlots);
+    promptText = renderTemplate(mainTemplateString, allSlots, {
+      removeMarker: ["FILES_LIST"],
+    });
   } else {
     // For non-standard templates (fragments), build the prompt structurally.
     const promptSections = [];
@@ -553,13 +553,13 @@ export async function buildRepoPromptText(
     const userFragmentRendered = renderTemplate(
       mainTemplateString,
       slotsForUserFragment,
+      { removeMarker: ["FILES_LIST"] },
     );
     promptSections.push(userFragmentRendered);
 
-    // Append PR details if the user's template fragment didn't explicitly include {{PR_DETAILS}} or {{prDetailsBlock}}
+    // Append PR details if the user's custom template fragment didn't explicitly include {{PR_DETAILS}} or {{prDetailsBlock}}
     const userHandledPrDetails =
-      mainTemplateString.includes("{{PR_DETAILS}}") ||
-      mainTemplateString.includes("{{prDetailsBlock}}");
+      tplMeta.expectsPrDetails || tplMeta.expectsPrDetailsBlock;
     if (!userHandledPrDetails) {
       promptSections.push(prDetailsString);
     }

@@ -13,20 +13,33 @@ import {
   type ResolvedPullMeta,
 } from "../../src/lib/repoprompt";
 import { isDiffBlock } from "../../src/lib/repoprompt.guards";
-import * as settings from "../../src/lib/settings";
+import * as settings from "../../src/lib/settings"; // Keep for getDefaultRoot
+import type { TemplateMeta } from "../../src/lib/templates"; // Import TemplateMeta type
 import { mockPull } from "../testing";
 
 // Mock renderTemplate to check its inputs and control its output
 vi.mock("../../src/lib/renderTemplate", () => ({
-  renderTemplate: vi.fn((template: string, slots: Record<string, unknown>) => {
-    // Simple mock: just join slots for verification, or return template if no slots for some reason
-    // A more sophisticated mock could actually perform replacement for more robust checks.
-    let result = template;
-    for (const [key, value] of Object.entries(slots)) {
-      result = result.replace(`{{${key}}}`, value as string);
-    }
-    return result;
-  }),
+  renderTemplate: vi.fn(
+    (template: string, slots: Record<string, unknown>, _opts?: any) => {
+      // Add _opts
+      // Simple mock: just join slots for verification, or return template if no slots for some reason
+      // A more sophisticated mock could actually perform replacement for more robust checks.
+      let result = template;
+      for (const [key, value] of Object.entries(slots)) {
+        result = result.replace(`{{${key}}}`, String(value ?? "")); // Ensure value is string
+      }
+      // Basic simulation of line removal for empty tokens for testing purposes
+      result = result
+        .split("\n")
+        .filter(
+          (line) =>
+            !/^\s*{{\s*\w+\s*}}\s*$/.test(line.trim()) &&
+            line.trim().length > 0,
+        )
+        .join("\n");
+      return result.trim();
+    },
+  ),
 }));
 
 // Mock fetchPullComments
@@ -37,6 +50,39 @@ vi.mock("../../src/lib/github/client", async (importOriginal) => {
   return {
     ...originalClient,
     fetchPullComments: vi.fn(),
+  };
+});
+
+// Mock templates.templateMap
+let mockTemplateMapInstance: Record<PromptMode, { body: string; meta: TemplateMeta }>;
+let actualAnalyseTemplateFn: (tpl: string) => TemplateMeta; // Keep for test-specific dynamic meta if needed
+
+// Define a simple default meta object for the mock
+const mockDefaultMeta: TemplateMeta = {
+  expectsFilesList: true, // Default to true for broad testing, can be overridden per test
+  expectsDiffContent: true, // Default to true
+  expectsSetup: true,
+  expectsLink: true,
+  expectsPrDetails: true,
+  expectsPrDetailsBlock: false, // Default to not expecting this one
+};
+
+vi.mock("../../src/lib/templates", async () => {
+  const actualTemplates = await vi.importActual<typeof import("../../src/lib/templates")>("../../src/lib/templates");
+  actualAnalyseTemplateFn = actualTemplates.analyseTemplate; // Capture for potential use in tests
+
+  // Initialize with default structure that tests can override
+  // Use a simple, predefined meta object here to avoid issues with `actualAnalyseTemplateFn` during hoisting
+  mockTemplateMapInstance = {
+    implement: { body: "mock implement body", meta: { ...mockDefaultMeta } },
+    review: { body: "mock review body", meta: { ...mockDefaultMeta } },
+    "adjust-pr": { body: "mock adjust-pr body", meta: { ...mockDefaultMeta } },
+    respond: { body: "mock respond body", meta: { ...mockDefaultMeta } },
+  };
+  return {
+    // Spread actualTemplates to ensure other exports from templates.ts (like analyseTemplate itself) are available if tests import them directly
+    ...actualTemplates,
+    templateMap: mockTemplateMapInstance,
   };
 });
 
@@ -118,12 +164,12 @@ describe("buildRepoPromptText", () => {
     files: ["src/main.ts", "README.md"],
     rootPath: "/tmp/myrepo",
   };
-  const mockResolvedMeta = mockResolvedMetaBase;
-  let getPromptTemplateSpy: any;
+  // const mockResolvedMeta = mockResolvedMetaBase; // This was defined but not always used, use mockResolvedMetaBase directly or clone
   let listPrCommitsSpy: any;
   let getPullRequestDiffSpy: any;
 
-  beforeEach(() => {
+  beforeEach(async () => {
+    // Make beforeEach async if needed for imports
     vi.clearAllMocks();
     getPullRequestDiffSpy = vi
       .spyOn(gh, "getPullRequestDiff")
@@ -133,13 +179,17 @@ describe("buildRepoPromptText", () => {
     vi.spyOn(gh, "getCommitDiff").mockResolvedValue(
       "dummy commit diff content",
     );
-    getPromptTemplateSpy = vi
-      .spyOn(settings, "getPromptTemplate")
-      .mockImplementation((_mode: PromptMode) =>
-        Promise.resolve(
-          `MODE ${_mode.toUpperCase()} TEMPLATE:\nSETUP:\n{{SETUP}}\nPR_DETAILS:\n{{PR_DETAILS}}\nFILES_LIST:\n{{FILES_LIST}}\nDIFF_CONTENT:\n{{DIFF_CONTENT}}\nLINK:\n{{LINK}}`,
-        ),
-      );
+
+    // Setup default mock for templateMap for each test run
+    const defaultTemplateBodyForMode = (mode: PromptMode) =>
+      `MODE ${mode.toUpperCase()} TEMPLATE:\nSETUP:\n{{SETUP}}\nPR_DETAILS:\n{{PR_DETAILS}}\nFILES_LIST:\n{{FILES_LIST}}\nDIFF_CONTENT:\n{{DIFF_CONTENT}}\nLINK:\n{{LINK}}`;
+    for (const mode in mockTemplateMapInstance) {
+      const body = defaultTemplateBodyForMode(mode as PromptMode);
+      mockTemplateMapInstance[mode as PromptMode] = {
+        body: body,
+        meta: actualAnalyseTemplateFn(body),
+      };
+    }
   });
 
   afterEach(() => {
@@ -154,7 +204,7 @@ describe("buildRepoPromptText", () => {
       body: "PR Body here.",
       url: "https://github.com/owner/myrepo/pull/123",
       branch: "feature-branch",
-      files: ["src/main.ts", "README.md"], // files in pull object, not directly used by FILES_LIST logic
+      files: ["src/main.ts", "README.md"],
       author: {
         id: "u1",
         name: "testauthor",
@@ -163,25 +213,31 @@ describe("buildRepoPromptText", () => {
       },
       createdAt: "2024-01-01T00:00:00Z",
     });
-    const meta = { ...mockResolvedMetaBase, files: ["fileA.ts", "fileB.ts"] }; // meta.files used for FILES_LIST
+    const meta = { ...mockResolvedMetaBase, files: ["fileA.ts", "fileB.ts"] };
 
-    await buildRepoPromptText(
+    // Configure templateMap for this test if specific meta needed (e.g. expectsFilesList = true)
+    const currentMode = defaultPromptMode;
+    const templateBody = `MODE ${currentMode.toUpperCase()} TEMPLATE:\n{{SETUP}}\n{{PR_DETAILS}}\n{{FILES_LIST}}\n{{DIFF_CONTENT}}\n{{LINK}}`;
+    mockTemplateMapInstance[currentMode] = {
+      body: templateBody,
+      meta: actualAnalyseTemplateFn(templateBody), // Ensures expectsFilesList is true
+    };
+
+    const { promptText } = await buildRepoPromptText(
       pull,
-      { includePr: false }, // !includePr means FILES_LIST should be populated
+      { includePr: false },
       defaultPromptMode,
       undefined,
       meta,
     );
 
-    expect(getPromptTemplateSpy).toHaveBeenCalledWith(defaultPromptMode);
     expect(
       vi.mocked(renderTemplateModule.renderTemplate),
     ).toHaveBeenCalledTimes(1);
 
-    const expectedTemplateString = `MODE ${defaultPromptMode.toUpperCase()} TEMPLATE:\nSETUP:\n{{SETUP}}\nPR_DETAILS:\n{{PR_DETAILS}}\nFILES_LIST:\n{{FILES_LIST}}\nDIFF_CONTENT:\n{{DIFF_CONTENT}}\nLINK:\n{{LINK}}`;
     const renderCallArgs = vi.mocked(renderTemplateModule.renderTemplate).mock
       .calls[0];
-    expect(renderCallArgs[0]).toBe(expectedTemplateString);
+    expect(renderCallArgs[0]).toBe(templateBody); // Check the body passed to renderTemplate
 
     const slots = renderCallArgs[1];
     expect(slots.SETUP).toContain("cd /tmp/myrepo");
@@ -191,19 +247,21 @@ describe("buildRepoPromptText", () => {
       id: `pr-details-${pull.id}`,
       kind: "comment",
       header: `### PR #${pull.number} DETAILS: ${pull.title}`,
-      commentBody: "PR Body here.", // Should be clean body
+      commentBody: "PR Body here.",
       author: "testauthor",
       authorAvatarUrl: "avatar.url",
       timestamp: "2024-01-01T00:00:00Z",
     } as CommentBlockInput;
     expect(slots.PR_DETAILS).toBe(formatPromptBlock(prDetailsBlock));
-
     expect(slots.FILES_LIST).toBe(
       "### files changed (2)\n- fileA.ts\n- fileB.ts",
     );
-
     expect(slots.DIFF_CONTENT).toBe("");
     expect(slots.LINK).toBe("🔗 https://github.com/owner/myrepo/pull/123");
+
+    // Duplicate content checks
+    expect(promptText.match(/files changed/g) ?? []).toHaveLength(1);
+    expect(promptText.match(/### PR #\d+ DETAILS/g) ?? []).toHaveLength(1);
   });
 
   it("conditional files list: FILES_LIST slot should be populated if includePr is false and meta.files exist", async () => {
@@ -770,7 +828,7 @@ More PR body text.`;
       { includeComments: true }, // Comments are not initially selected for promptText by default
       defaultPromptMode, // Explicitly pass mode
       endpoint,
-      mockResolvedMeta,
+      mockResolvedMetaBase,
     );
 
     expect(vi.mocked(gh.fetchPullComments)).toHaveBeenCalledWith(
@@ -822,7 +880,7 @@ More PR body text.`;
       { includePr: true },
       defaultPromptMode, // Explicitly pass mode
       undefined,
-      mockResolvedMeta,
+      mockResolvedMetaBase,
     );
 
     expect(gh.getPullRequestDiff).toHaveBeenCalledWith(
@@ -879,7 +937,7 @@ More PR body text.`;
       { includeComments: true, includePr: true },
       defaultPromptMode, // Explicitly pass mode
       endpoint,
-      mockResolvedMeta,
+      mockResolvedMetaBase,
     );
 
     // Order in allPromptBlocks: PR Details, then Comments, then Diffs
@@ -916,15 +974,15 @@ More PR body text.`;
     };
     const prDetailsContentPattern = /### PR #777 DETAILS: Token Test PR/;
 
-    test("should replace {{prDetailsBlock}} token with PR details content", async () => {
-      getPromptTemplateSpy.mockResolvedValue(
-        "System Preamble.\n{{prDetailsBlock}}\nSystem Postamble.",
-      );
-      // This template is not "standard" because it's missing SETUP, PR_DETAILS, LINK.
-      // It will be handled by the `!isStandardTemplate` branch.
-      // `prDetailsContentForBlockToken` will be `prDetailsString` because `{{PR_DETAILS}}` is not in template.
-      // `userHandledPrDetails` will be true because `{{prDetailsBlock}}` is in template.
-      // So, PR details will be rendered once via `{{prDetailsBlock}}` and not appended.
+    test("should replace {{prDetailsBlock}} token with PR details content (non-standard template)", async () => {
+      const body = "System Preamble.\n{{prDetailsBlock}}\nSystem Postamble.";
+      mockTemplateMapInstance[defaultPromptMode] = {
+        body,
+        meta: actualAnalyseTemplateFn(body),
+      };
+      // This template is not "standard" because it's missing SETUP, (PR_DETAILS), LINK from meta perspective.
+      // analyseTemplate will set expectsPrDetailsBlock = true, expectsPrDetails = false, expectsSetup = false, expectsLink = false.
+      // isStandardTemplate will be false.
 
       const { promptText } = await buildRepoPromptText(
         pull,
@@ -934,28 +992,38 @@ More PR body text.`;
         meta,
       );
 
-      // console.log("ACTUAL PROMPT TEXT (prDetailsBlock only):", promptText);
+      // Check structure passed to renderTemplate for non-standard
+      const renderCall = vi
+        .mocked(renderTemplateModule.renderTemplate)
+        .mock.calls.find((call) => call[0] === body);
+      expect(renderCall).toBeDefined();
+      if (renderCall) {
+        const slotsForUserFragment = renderCall[1];
+        expect(slotsForUserFragment.prDetailsBlock).toMatch(
+          prDetailsContentPattern,
+        );
+      }
 
-      // Expected structure for non-standard template: SETUP, rendered_fragment, LINK
-      // rendered_fragment = "System Preamble.\n<PR_DETAILS_CONTENT>\nSystem Postamble."
+      // Check final promptText (relies on mock renderTemplate's behavior)
       expect(promptText).toMatch(/^## SETUP\n([\s\S]*?)\nSystem Preamble\./m);
-      expect(promptText).toMatch(prDetailsContentPattern); // PR details are injected once
+      expect(promptText).toMatch(prDetailsContentPattern);
       expect(promptText).toMatch(
         /System Postamble\.\n([\s\S]*?)\n🔗 https:\/\/github\.com\/owner\/myrepo\/pull\/777$/m,
       );
       expect(
         promptText.match(new RegExp(prDetailsContentPattern.source, "g"))
           ?.length,
-      ).toBe(1); // Ensure it appears only once
-      expect(promptText.includes("{{prDetailsBlock}}")).toBe(false); // Token is replaced
+      ).toBe(1);
+      expect(promptText.includes("{{prDetailsBlock}}")).toBe(false);
     });
 
-    test("should replace {{PR_DETAILS}} token with PR details content", async () => {
-      getPromptTemplateSpy.mockResolvedValue(
-        "System Preamble.\n{{PR_DETAILS}}\nSystem Postamble.",
-      );
-      // Not "standard". `prDetailsContentForBlockToken` will be empty. `allSlots.PR_DETAILS` gets content.
-      // `userHandledPrDetails` is true. Not appended. Rendered once.
+    test("should replace {{PR_DETAILS}} token with PR details content (non-standard template)", async () => {
+      const body = "System Preamble.\n{{PR_DETAILS}}\nSystem Postamble.";
+      mockTemplateMapInstance[defaultPromptMode] = {
+        body,
+        meta: actualAnalyseTemplateFn(body),
+      };
+      // isStandardTemplate will be false.
 
       const { promptText } = await buildRepoPromptText(
         pull,
@@ -964,7 +1032,19 @@ More PR body text.`;
         undefined,
         meta,
       );
-      // console.log("ACTUAL PROMPT TEXT (PR_DETAILS only):", promptText);
+
+      const renderCall = vi
+        .mocked(renderTemplateModule.renderTemplate)
+        .mock.calls.find((call) => call[0] === body);
+      expect(renderCall).toBeDefined();
+      if (renderCall) {
+        const slotsForUserFragment = renderCall[1];
+        expect(slotsForUserFragment.PR_DETAILS).toMatch(
+          prDetailsContentPattern,
+        );
+        expect(slotsForUserFragment.prDetailsBlock).toBe(""); // As PR_DETAILS is present in template
+      }
+
       expect(promptText).toMatch(/^## SETUP\n([\s\S]*?)\nSystem Preamble\./m);
       expect(promptText).toMatch(prDetailsContentPattern);
       expect(promptText).toMatch(
@@ -977,16 +1057,14 @@ More PR body text.`;
       expect(promptText.includes("{{PR_DETAILS}}")).toBe(false);
     });
 
-    test("should handle both {{PR_DETAILS}} and {{prDetailsBlock}} tokens, rendering PR details only once", async () => {
-      getPromptTemplateSpy.mockResolvedValue(
-        "System Preamble.\n{{PR_DETAILS}}\nAlso here: {{prDetailsBlock}}\nSystem Postamble.",
-      );
-      // Not "standard".
-      // `allSlots.PR_DETAILS` gets content.
-      // `prDetailsContentForBlockToken` (for `allSlots.prDetailsBlock`) will be EMPTY because `{{PR_DETAILS}}` is in template.
-      // `userHandledPrDetails` is true. Not appended.
-      // `{{PR_DETAILS}}` is rendered with content. `{{prDetailsBlock}}` is rendered with empty string (line removed by renderTemplate).
-      // So, PR details appear once.
+    test("should handle both {{PR_DETAILS}} and {{prDetailsBlock}} tokens, rendering PR details only once (standard template)", async () => {
+      const body =
+        "{{SETUP}}\n{{PR_DETAILS}}\nAlso here: {{prDetailsBlock}}\n{{LINK}}";
+      mockTemplateMapInstance[defaultPromptMode] = {
+        body,
+        meta: actualAnalyseTemplateFn(body),
+      };
+      // isStandardTemplate will be true.
 
       const { promptText } = await buildRepoPromptText(
         pull,
@@ -995,37 +1073,36 @@ More PR body text.`;
         undefined,
         meta,
       );
-      // console.log("ACTUAL PROMPT TEXT (both tokens):", promptText);
-      expect(promptText).toMatch(/^## SETUP\n([\s\S]*?)\nSystem Preamble\./m);
+
+      const renderCall = vi.mocked(renderTemplateModule.renderTemplate).mock
+        .calls[0];
+      expect(renderCall[0]).toBe(body); // Standard template, body is passed directly
+      const slots = renderCall[1];
+      expect(slots.PR_DETAILS).toMatch(prDetailsContentPattern);
+      expect(slots.prDetailsBlock).toBe(""); // Because PR_DETAILS is in template
+
       expect(promptText).toMatch(prDetailsContentPattern);
-      expect(promptText).toMatch(
-        /System Postamble\.\n([\s\S]*?)\n🔗 https:\/\/github\.com\/owner\/myrepo\/pull\/777$/m,
-      );
       expect(
         promptText.match(new RegExp(prDetailsContentPattern.source, "g"))
           ?.length,
       ).toBe(1);
       expect(promptText.includes("{{PR_DETAILS}}")).toBe(false);
       expect(promptText.includes("{{prDetailsBlock}}")).toBe(false);
-      // Check that "Also here: " is followed by a newline directly to "System Postamble",
-      // meaning the {{prDetailsBlock}} line was removed.
-      expect(promptText).toMatch(/Also here:\s*\nSystem Postamble\./m);
+      // Check that "Also here: " is followed by a newline directly to LINK,
+      // meaning the {{prDetailsBlock}} line was removed by the (mocked) renderTemplate.
+      // This depends on the mock renderTemplate's line removal logic.
+      expect(promptText).toMatch(
+        /Also here:\s*\n🔗 https:\/\/github\.com\/owner\/myrepo\/pull\/777/m,
+      );
     });
 
-    test("should remove {{prDetailsBlock}} token if PR details content is empty (e.g., no blocks selected)", async () => {
-      // This test's original premise might be hard to achieve perfectly as prDetailsString is always populated.
-      // The key is that if prDetailsString were empty, the token would be replaced by empty and line removed.
-      // With the new logic, if {{PR_DETAILS}} is present, {{prDetailsBlock}} gets "" and is removed.
-      // This test is now covered by the "both tokens" test effectively.
-      // Let's ensure a standard template with both tokens also results in one PR detail.
-      getPromptTemplateSpy.mockResolvedValue(
-        "{{SETUP}}\n{{PR_DETAILS}}\n{{LINK}}\nText: {{prDetailsBlock}}",
-      );
-      // This IS "standard". `isStandardTemplate` is true.
-      // `allSlots.PR_DETAILS` gets content.
-      // `allSlots.prDetailsBlock` gets EMPTY string.
-      // Result: `setup_content\npr_details_content\nlink_content\nText: \n` (empty line removed by renderTemplate)
-      // So, PR details appear once.
+    test("should append PR details content if no PR token is present in template (non-standard)", async () => {
+      const body = "Base prompt without token."; // No PR_DETAILS or prDetailsBlock
+      mockTemplateMapInstance[defaultPromptMode] = {
+        body,
+        meta: actualAnalyseTemplateFn(body),
+      };
+      // isStandardTemplate will be false. userHandledPrDetails will be false.
 
       const { promptText } = await buildRepoPromptText(
         pull,
@@ -1034,32 +1111,7 @@ More PR body text.`;
         undefined,
         meta,
       );
-      // console.log("ACTUAL PROMPT TEXT (standard, both tokens):", promptText);
-      expect(promptText).toMatch(prDetailsContentPattern);
-      expect(
-        promptText.match(new RegExp(prDetailsContentPattern.source, "g"))
-          ?.length,
-      ).toBe(1);
-      expect(promptText).not.toContain("Text: ### PR"); // {{prDetailsBlock}} should not have rendered details
-      expect(promptText).toMatch(/Text:\s*$/m); // Check that "Text: " is at the end (no newline required since template doesn't include one)
-      // renderTemplate cleans up empty lines, so if "Text: {{prDetailsBlock}}" was the last line,
-      // it would become "Text:"
-    });
 
-    test("should append PR details content if token is not present in template (backward compatibility for non-standard)", async () => {
-      getPromptTemplateSpy.mockResolvedValue("Base prompt without token."); // Not standard, no PR_DETAILS/prDetailsBlock
-      // `userHandledPrDetails` will be false. PR details will be appended.
-
-      const { promptText } = await buildRepoPromptText(
-        pull,
-        {},
-        defaultPromptMode,
-        undefined,
-        meta,
-      );
-      // console.log("ACTUAL PROMPT TEXT (no token, non-standard):", promptText);
-
-      // Expected structure: SETUP, "Base prompt...", appended PR_DETAILS, LINK
       expect(promptText).toMatch(
         /^## SETUP\n([\s\S]*?)\nBase prompt without token\./m,
       );
@@ -1068,8 +1120,6 @@ More PR body text.`;
         promptText.match(new RegExp(prDetailsContentPattern.source, "g"))
           ?.length,
       ).toBe(1);
-      expect(promptText.includes("{{prDetailsBlock}}")).toBe(false);
-      expect(promptText.includes("{{PR_DETAILS}}")).toBe(false);
 
       const expectedOrder = [
         "## SETUP",
@@ -1082,7 +1132,7 @@ More PR body text.`;
         const currentIndex = promptText.indexOf(part);
         expect(
           currentIndex,
-          `Part "${part}" not found or out of order in 'no token' case.`,
+          `Part "${part}" not found or out of order.`,
         ).toBeGreaterThan(lastIndex);
         lastIndex = currentIndex;
       }
@@ -1108,7 +1158,7 @@ More PR body text.`;
       { includeLastCommit: true },
       defaultPromptMode, // Explicitly pass mode
       undefined,
-      mockResolvedMeta,
+      mockResolvedMetaBase,
     );
 
     const diffBlock = blocks.find(
@@ -1149,7 +1199,7 @@ More PR body text.`;
       { commits: ["specsha1", "specsha2"] },
       defaultPromptMode, // Explicitly pass mode
       undefined,
-      mockResolvedMeta,
+      mockResolvedMetaBase,
     );
 
     const diffBlock1 = blocks.find((b) => b.id === `diff-commit-specsha1`);

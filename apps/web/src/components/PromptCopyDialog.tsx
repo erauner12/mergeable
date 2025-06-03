@@ -39,6 +39,9 @@ interface InjectResult {
 
 // Helper function to inject selected content into template
 function injectSelectionIntoTemplate(template: string, selectionToInject: string): InjectResult {
+  const hit = template.includes(DIFF_PLACEHOLDER_TEXT) || template.includes(DIFF_TOKEN_TEXT);
+  console.debug("[injectSelectionIntoTemplate] placeholderFound?", hit);
+  
   // Try replacing placeholder text first
   if (template.includes(DIFF_PLACEHOLDER_TEXT)) {
     return {
@@ -352,6 +355,44 @@ export function PromptCopyDialog({
     selectedIds.size === 0 &&
     userText.trim() === "" &&
     initialPromptText.trim() === "";
+
+  // DEBUG ––– remove after investigation –––––––––––––––––
+  useEffect(() => {
+    // Fire every time the user toggles any checkbox or updates the picker.
+    // It will *not* spam because the dependencies are tight.
+    console.groupCollapsed(
+      "%c[PromptCopyDialog DEBUG] build context",
+      "color:tomato;font-weight:bold;"
+    );
+
+    console.log("initialPromptText (trimmed)", initialPromptText.trim());
+
+    console.log(
+      "blocks (id, kind, header):",
+      blocks.map(({ id, kind, header }) => ({ id, kind, header }))
+    );
+
+    console.log("selectedIds →", Array.from(selectedIds));
+
+    console.log("selectedDiffBlock →", selectedDiffBlock?.id ?? null);
+
+    console.log("selectedNonDiffText →", selectedNonDiffText);
+
+    console.log("diffPayload (first 250 chars) →", diffPayload.slice(0, 250));
+
+    // What will actually be copied if the user presses "Copy Selected"
+    console.log("getFinalPrompt() (first 250 chars) →", getFinalPrompt().slice(0, 250));
+
+    console.groupEnd();
+  }, [
+    initialPromptText,
+    blocks,
+    selectedIds,
+    selectedDiffBlock,
+    selectedNonDiffText,
+    diffPayload,
+  ]);
+  // DEBUG –––––––––––––––––––––––––––––––––––––––––––––––––––
 
   const renderBlockContent = (block: PromptBlock) => {
     if (block.kind === "diff") {

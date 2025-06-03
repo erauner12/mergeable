@@ -8,14 +8,16 @@ import {
   expect,
   it,
   vi,
+  type MockInstance,
 } from "vitest";
 import type { PullRequestCommit } from "../../src/lib/github/client";
 import type { PromptMode } from "../../src/lib/repoprompt"; // SUT type
+import type { TemplateMeta } from "../../src/lib/templates";
 
 // Declare variables that will be initialized in beforeAll
-let originalTemplateMapDeepCopy: any;
-let actualAnalyseTemplateFn: any;
-const mutableMockedTemplateMap: any = {}; // Initialize as an empty object
+let originalTemplateMapDeepCopy: Record<PromptMode, { body: string; meta: TemplateMeta }>;
+let actualAnalyseTemplateFn: (tpl: string) => TemplateMeta;
+const mutableMockedTemplateMap: Record<PromptMode, { body: string; meta: TemplateMeta }> = {} as Record<PromptMode, { body: string; meta: TemplateMeta }>;
 
 // Move the vi.mock for templates to the very top, before any imports that might transitively import it
 vi.mock("../../src/lib/templates", () => ({
@@ -23,22 +25,22 @@ vi.mock("../../src/lib/templates", () => ({
   get templateMap() {
     return mutableMockedTemplateMap;
   },
-  analyseTemplate: (...args: any[]) => actualAnalyseTemplateFn(...args),
+  analyseTemplate: (...args: Parameters<typeof actualAnalyseTemplateFn>) => actualAnalyseTemplateFn(...args),
 }));
 
 beforeAll(async () => {
   const actualTemplatesModule = await vi.importActual<
     typeof import("../../src/lib/templates")
   >("../../src/lib/templates");
-  originalTemplateMapDeepCopy = JSON.parse(
-    JSON.stringify(actualTemplatesModule.templateMap),
-  );
+  originalTemplateMapDeepCopy = structuredClone(actualTemplatesModule.templateMap);
   actualAnalyseTemplateFn = actualTemplatesModule.analyseTemplate;
 
   // Populate mutableMockedTemplateMap after actuals are loaded
-  const initialCopy = JSON.parse(JSON.stringify(originalTemplateMapDeepCopy));
+  const initialCopy = structuredClone(originalTemplateMapDeepCopy);
   for (const key in initialCopy) {
-    mutableMockedTemplateMap[key] = initialCopy[key];
+    if (key in initialCopy) {
+      mutableMockedTemplateMap[key as PromptMode] = initialCopy[key as PromptMode];
+    }
   }
 });
 
@@ -68,7 +70,7 @@ function setMockTemplateBody(mode: PromptMode, body: string) {
 // Mock renderTemplate to check its inputs and control its output
 vi.mock("../../src/lib/renderTemplate", () => ({
   renderTemplate: vi.fn(
-    (template: string, slots: Record<string, unknown>, _opts?: any) => {
+    (template: string, slots: Record<string, unknown>, _opts?: unknown) => {
       // Add _opts
       // Simple mock: just join slots for verification, or return template if no slots for some reason
       // A more sophisticated mock could actually perform replacement for more robust checks.
@@ -185,20 +187,22 @@ describe("buildRepoPromptText", () => {
     files: ["src/main.ts", "README.md"],
     rootPath: "/tmp/myrepo",
   };
-  let getPullRequestDiffSpy: any;
+  let getPullRequestDiffSpy: MockInstance;
 
   beforeEach(() => {
     vi.clearAllMocks();
 
     // Reset mutableMockedTemplateMap to a fresh copy of the original for test isolation
-    const freshCopy = JSON.parse(JSON.stringify(originalTemplateMapDeepCopy));
+    const freshCopy = structuredClone(originalTemplateMapDeepCopy);
     // Clear current keys from the mutable object
     for (const key in mutableMockedTemplateMap) {
-      delete mutableMockedTemplateMap[key];
+      delete mutableMockedTemplateMap[key as PromptMode];
     }
     // Repopulate the mutable object with fresh copy
     for (const key in freshCopy) {
-      mutableMockedTemplateMap[key] = freshCopy[key];
+      if (key in freshCopy) {
+        mutableMockedTemplateMap[key as PromptMode] = freshCopy[key as PromptMode];
+      }
     }
 
     getPullRequestDiffSpy = vi

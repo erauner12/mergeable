@@ -480,6 +480,11 @@ export async function buildRepoPromptText(
     if (!userHandledPrDetails) {
       promptSections.push(prDetailsString);
     }
+    // Append diff content if the template doesn't handle {{DIFF_CONTENT}} but diff content is available
+    const userHandledDiffContent = tplMeta.expectsDiffContent;
+    if (!userHandledDiffContent && diffContentString.trim()) {
+      promptSections.push(diffContentString);
+    }
     // Always include LINK section
     promptSections.push(linkString);
     promptText = promptSections.join("\n\n");

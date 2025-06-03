@@ -24,6 +24,7 @@ import {
 } from "../lib/github/diffUtils";
 import type { PromptBlock } from "../lib/repoprompt";
 import { formatPromptBlock } from "../lib/repoprompt";
+import { stripFilesListSection } from "../lib/utils/stripFilesList"; // NEW
 import { FileDiffPicker } from "./FileDiffPicker";
 import styles from "./PromptCopyDialog.module.scss";
 
@@ -261,13 +262,22 @@ export function PromptCopyDialog({
           });
         }
         // DEBUG: Log the block and result
-        console.log('DEBUG currentSelectedText: block =', JSON.stringify(block));
+        console.log(
+          "DEBUG currentSelectedText: block =",
+          JSON.stringify(block),
+        );
         const formatted = formatPromptBlock(block);
-        console.log('DEBUG currentSelectedText: formatPromptBlock result =', JSON.stringify(formatted));
+        console.log(
+          "DEBUG currentSelectedText: formatPromptBlock result =",
+          JSON.stringify(formatted),
+        );
         return formatted;
       })
       .join("\n");
-    console.log('DEBUG currentSelectedText: final result =', JSON.stringify(result));
+    console.log(
+      "DEBUG currentSelectedText: final result =",
+      JSON.stringify(result),
+    );
     return result;
   }, [blocks, selectedIds, diffPatchData, selectedFilePaths]);
 
@@ -288,8 +298,12 @@ export function PromptCopyDialog({
       return hadUserTextEver ? selectionOriginal : selectionTrimmed;
     }
 
+    // Remove any leading files-list header from the selected diff to avoid
+    // duplicating the template’s own {{FILES_LIST}} section.
+    const selectionClean = stripFilesListSection(selectionTrimmed);
+
     // Otherwise, build up the prompt from trimmed pieces.
-    const sections = [selectionTrimmed, template, extra].filter(Boolean);
+    const sections = [selectionClean, template, extra].filter(Boolean);
     return sections.join("\n\n").trimEnd();
   };
 

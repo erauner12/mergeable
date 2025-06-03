@@ -12,6 +12,8 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import * as mutations from "../../src/lib/mutations";
 import * as queries from "../../src/lib/queries";
 import type { PromptMode } from "../../src/lib/repoprompt";
+// ADD: Import settingsLib
+import * as settingsLib from "../../src/lib/settings";
 import SettingsPage from "../../src/routes/settings";
 // Import * as templates will now correctly point to the mocked module
 import * as templates from "../../src/lib/templates";

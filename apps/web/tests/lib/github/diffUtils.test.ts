@@ -89,20 +89,6 @@ test("buildClipboardPayload respects selection & omission reasons", () => {
   expect(payloadNoneSelected).not.toMatch(/### files changed/); // Ensure no header
 });
 
-test("buildClipboardPayload handles large text file omission", () => {
-  const LARGE_TEXT_DIFF_CONTENT = `diff --git a/large.txt b/large.txt
---- a/large.txt
-// This test is no longer applicable as buildClipboardPayload does not generate headers or omission reasons.
-// It will be removed.
-});
-
-test("buildClipboardPayload handles large byte size file omission", () => {
-    const VERY_LONG_LINE_DIFF_CONTENT = `diff --git a/longline.js b/longline.js
---- a/longline.js
-// This test is no longer applicable as buildClipboardPayload does not generate headers or omission reasons.
-// It will be removed.
-});
-
 test("buildClipboardPayload includes all selected files' patches", () => {
   const patches = splitUnifiedDiff(MULTI_FILE_DIFF);
   const allFilePaths = Object.keys(patches).sort(); // Ensures ["a.txt", "img.png"]

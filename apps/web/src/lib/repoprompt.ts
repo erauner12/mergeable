@@ -297,6 +297,7 @@ export async function buildRepoPromptText(
   const token = endpoint?.auth;
 
   const allPromptBlocks: PromptBlock[] = [];
+  // Ensure to use pushUnique when adding to allPromptBlocks to prevent duplicates if an ID is accidentally processed multiple times.
   // `initiallySelectedBlocks` will be used to determine content for PR_DETAILS and DIFF_CONTENT slots
   const initiallySelectedBlocks: PromptBlock[] = [];
 
@@ -471,41 +472,57 @@ export async function buildRepoPromptText(
   const mainTemplateString = await getPromptTemplate(mode);
 
   // Check if template contains the prDetailsBlock token
-  const hasTokenInTemplate = mainTemplateString.includes("{{prDetailsBlock}}");
+  // const hasTokenInTemplate = mainTemplateString.includes("{{prDetailsBlock}}"); // This specific variable is no longer used directly in the old way.
 
-  // Check if this is a standard template (contains standard slots)
-  const isStandardTemplate =
-    mainTemplateString.includes("{{SETUP}}") &&
-    mainTemplateString.includes("{{PR_DETAILS}}") &&
-    mainTemplateString.includes("{{LINK}}");
+  // Define how prDetailsBlock token is handled: it gets content only if PR_DETAILS token is NOT in the template.
+  const prDetailsContentForBlockToken = mainTemplateString.includes("{{PR_DETAILS}}") ? "" : prDetailsString;
 
-  // Render the template with slots including prDetailsBlock support
-  const renderedTemplate = renderTemplate(mainTemplateString, {
+  // Define all available slots for rendering
+  const allSlots = {
     SETUP: setupString,
-    PR_DETAILS: prDetailsString,
-    FILES_LIST: filesListString, // Provide FILES_LIST slot for new templates
+    PR_DETAILS: prDetailsString, // {{PR_DETAILS}} always gets the full PR details string
+    FILES_LIST: filesListString,
     DIFF_CONTENT: diffContentString,
     LINK: linkString,
-    prDetailsBlock: prDetailsString, // Add support for {{prDetailsBlock}} token
-  });
+    prDetailsBlock: prDetailsContentForBlockToken, // {{prDetailsBlock}} is an alternative, gets content if {{PR_DETAILS}} is absent
+  };
+
+  // Check if this is a "standard" template that handles its own structure
+  const isStandardTemplate =
+    mainTemplateString.includes("{{SETUP}}") &&
+    (mainTemplateString.includes("{{PR_DETAILS}}") || mainTemplateString.includes("{{prDetailsBlock}}")) &&
+    mainTemplateString.includes("{{LINK}}");
 
   let promptText: string;
 
   if (isStandardTemplate) {
-    // For standard templates, just return the rendered content
-    promptText = renderedTemplate;
+    // For standard templates, render with all slots and use the result directly.
+    // renderTemplate will clean up any unused tokens or empty lines.
+    promptText = renderTemplate(mainTemplateString, allSlots);
   } else {
-    // For custom templates, use the structured approach with SETUP/LINK sections
+    // For non-standard templates (fragments), build the prompt structurally.
     const promptSections = [];
 
-    // Always include SETUP section
+    // Always include SETUP section header
     promptSections.push(`## SETUP\n${setupString}`);
 
-    // Add the rendered template content
-    promptSections.push(renderedTemplate);
+    // Render the user's template fragment with content-specific slots.
+    // Exclude SETUP and LINK from this specific render pass, as they are added structurally.
+    const slotsForUserFragment = {
+      PR_DETAILS: prDetailsString,
+      prDetailsBlock: prDetailsContentForBlockToken,
+      FILES_LIST: filesListString,
+      DIFF_CONTENT: diffContentString,
+      // Any other custom tokens the user might have in their fragment would pass through,
+      // and if not matched by renderTemplate's cleanup, would remain.
+      // Or, if they are on their own line, renderTemplate cleans them.
+    };
+    const userFragmentRendered = renderTemplate(mainTemplateString, slotsForUserFragment);
+    promptSections.push(userFragmentRendered);
 
-    // For backward compatibility: if template didn't contain {{prDetailsBlock}}, append PR details
-    if (!hasTokenInTemplate) {
+    // Append PR details if the user's template fragment didn't explicitly include {{PR_DETAILS}} or {{prDetailsBlock}}
+    const userHandledPrDetails = mainTemplateString.includes("{{PR_DETAILS}}") || mainTemplateString.includes("{{prDetailsBlock}}");
+    if (!userHandledPrDetails) {
       promptSections.push(prDetailsString);
     }
 

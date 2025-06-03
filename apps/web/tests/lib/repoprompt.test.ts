@@ -832,6 +832,11 @@ describe("buildRepoPromptText", () => {
       getPromptTemplateSpy.mockResolvedValue(
         "System Preamble.\n{{prDetailsBlock}}\nSystem Postamble.",
       );
+      // This template is not "standard" because it's missing SETUP, PR_DETAILS, LINK.
+      // It will be handled by the `!isStandardTemplate` branch.
+      // `prDetailsContentForBlockToken` will be `prDetailsString` because `{{PR_DETAILS}}` is not in template.
+      // `userHandledPrDetails` will be true because `{{prDetailsBlock}}` is in template.
+      // So, PR details will be rendered once via `{{prDetailsBlock}}` and not appended.
 
       const { promptText } = await buildRepoPromptText(
         pull,
@@ -841,79 +846,84 @@ describe("buildRepoPromptText", () => {
         meta,
       );
 
-      console.log("ACTUAL PROMPT TEXT:", promptText);
+      // console.log("ACTUAL PROMPT TEXT (prDetailsBlock only):", promptText);
 
-      expect(promptText).toMatch(/System Preamble\./);
-      expect(promptText).toMatch(prDetailsContentPattern); // PR details are injected
-      expect(promptText).toMatch(/System Postamble\./);
+      // Expected structure for non-standard template: SETUP, rendered_fragment, LINK
+      // rendered_fragment = "System Preamble.\n<PR_DETAILS_CONTENT>\nSystem Postamble."
+      expect(promptText).toMatch(/^## SETUP\n([\s\S]*?)\nSystem Preamble\./m);
+      expect(promptText).toMatch(prDetailsContentPattern); // PR details are injected once
+      expect(promptText).toMatch(/System Postamble\.\n([\s\S]*?)\n🔗 https:\/\/github\.com\/owner\/myrepo\/pull\/777$/m);
+      expect(promptText.match(new RegExp(prDetailsContentPattern.source, 'g'))?.length).toBe(1); // Ensure it appears only once
       expect(promptText.includes("{{prDetailsBlock}}")).toBe(false); // Token is replaced
-
-      // Check order: SETUP, (Preamble, PR Details, Postamble), LINK
-      const expectedOrder = [
-        "## SETUP",
-        "System Preamble.",
-        "### PR #777 DETAILS: Token Test PR",
-        "System Postamble.",
-        "🔗 https://github.com/owner/myrepo/pull/777",
-      ];
-      let lastIndex = -1;
-      for (const part of expectedOrder) {
-        const currentIndex = promptText.indexOf(part);
-        expect(
-          currentIndex,
-          `Part "${part}" not found or out of order.`,
-        ).toBeGreaterThan(lastIndex);
-        lastIndex = currentIndex;
-      }
     });
+
+    test("should replace {{PR_DETAILS}} token with PR details content", async () => {
+      getPromptTemplateSpy.mockResolvedValue(
+        "System Preamble.\n{{PR_DETAILS}}\nSystem Postamble.",
+      );
+      // Not "standard". `prDetailsContentForBlockToken` will be empty. `allSlots.PR_DETAILS` gets content.
+      // `userHandledPrDetails` is true. Not appended. Rendered once.
+
+      const { promptText } = await buildRepoPromptText(
+        pull,
+        {},
+        defaultPromptMode,
+        undefined,
+        meta,
+      );
+      // console.log("ACTUAL PROMPT TEXT (PR_DETAILS only):", promptText);
+      expect(promptText).toMatch(/^## SETUP\n([\s\S]*?)\nSystem Preamble\./m);
+      expect(promptText).toMatch(prDetailsContentPattern);
+      expect(promptText).toMatch(/System Postamble\.\n([\s\S]*?)\n🔗 https:\/\/github\.com\/owner\/myrepo\/pull\/777$/m);
+      expect(promptText.match(new RegExp(prDetailsContentPattern.source, 'g'))?.length).toBe(1);
+      expect(promptText.includes("{{PR_DETAILS}}")).toBe(false);
+    });
+
+    test("should handle both {{PR_DETAILS}} and {{prDetailsBlock}} tokens, rendering PR details only once", async () => {
+      getPromptTemplateSpy.mockResolvedValue(
+        "System Preamble.\n{{PR_DETAILS}}\nAlso here: {{prDetailsBlock}}\nSystem Postamble.",
+      );
+      // Not "standard".
+      // `allSlots.PR_DETAILS` gets content.
+      // `prDetailsContentForBlockToken` (for `allSlots.prDetailsBlock`) will be EMPTY because `{{PR_DETAILS}}` is in template.
+      // `userHandledPrDetails` is true. Not appended.
+      // `{{PR_DETAILS}}` is rendered with content. `{{prDetailsBlock}}` is rendered with empty string (line removed by renderTemplate).
+      // So, PR details appear once.
+
+      const { promptText } = await buildRepoPromptText(
+        pull,
+        {},
+        defaultPromptMode,
+        undefined,
+        meta,
+      );
+      // console.log("ACTUAL PROMPT TEXT (both tokens):", promptText);
+      expect(promptText).toMatch(/^## SETUP\n([\s\S]*?)\nSystem Preamble\./m);
+      expect(promptText).toMatch(prDetailsContentPattern);
+      expect(promptText).toMatch(/System Postamble\.\n([\s\S]*?)\n🔗 https:\/\/github\.com\/owner\/myrepo\/pull\/777$/m);
+      expect(promptText.match(new RegExp(prDetailsContentPattern.source, 'g'))?.length).toBe(1);
+      expect(promptText.includes("{{PR_DETAILS}}")).toBe(false);
+      expect(promptText.includes("{{prDetailsBlock}}")).toBe(false);
+      // Check that "Also here: " is followed by a newline directly to "System Postamble",
+      // meaning the {{prDetailsBlock}} line was removed.
+      expect(promptText).toMatch(/Also here:\s*\nSystem Postamble\./m);
+    });
+
 
     test("should remove {{prDetailsBlock}} token if PR details content is empty (e.g., no blocks selected)", async () => {
-      // This scenario is a bit artificial as PR details block is always created and initially selected.
-      // To test token removal with empty content, we'd need to manipulate `initiallySelectedBlocks`
-      // or have `formatListOfPromptBlocks` return empty for it.
-      // For now, let's assume `combinedInitialContent` could be empty if all blocks were deselected by some future logic
-      // or if `formatListOfPromptBlocks` returned empty.
-      // The current implementation of `buildRepoPromptText` ensures PR details is always in `initiallySelectedBlocks`.
-      // So, `trimmedCombinedInitialContent` will contain at least the PR details.
-      // A more realistic test for "token removal" is if the template is *only* the token.
-
+      // This test's original premise might be hard to achieve perfectly as prDetailsString is always populated.
+      // The key is that if prDetailsString were empty, the token would be replaced by empty and line removed.
+      // With the new logic, if {{PR_DETAILS}} is present, {{prDetailsBlock}} gets "" and is removed.
+      // This test is now covered by the "both tokens" test effectively.
+      // Let's ensure a standard template with both tokens also results in one PR detail.
       getPromptTemplateSpy.mockResolvedValue(
-        "System Preamble.\n{{prDetailsBlock}}\nSystem Postamble.",
+        "{{SETUP}}\n{{PR_DETAILS}}\n{{LINK}}\nText: {{prDetailsBlock}}",
       );
-      // To simulate empty combinedInitialContent, we'd need to mock formatListOfPromptBlocks or filter initiallySelectedBlocks
-      // However, the current logic ensures PR details are always there.
-      // The test above already shows replacement. If combinedInitialContent were empty, it would be replaced by empty string.
-
-      // Let's test if the template is *just* the token and content is provided.
-      getPromptTemplateSpy.mockResolvedValue("{{prDetailsBlock}}");
-      const { promptText: promptTextOnlyToken } = await buildRepoPromptText(
-        pull,
-        {},
-        defaultPromptMode,
-        undefined,
-        meta,
-      );
-      expect(promptTextOnlyToken).toMatch(prDetailsContentPattern);
-      expect(promptTextOnlyToken.includes("{{prDetailsBlock}}")).toBe(false);
-      // Check order: SETUP, PR Details, LINK
-      const expectedOrderOnlyToken = [
-        "## SETUP",
-        "### PR #777 DETAILS: Token Test PR",
-        "🔗 https://github.com/owner/myrepo/pull/777",
-      ];
-      let lastIndexOnlyToken = -1;
-      for (const part of expectedOrderOnlyToken) {
-        const currentIndex = promptTextOnlyToken.indexOf(part);
-        expect(
-          currentIndex,
-          `Part "${part}" not found or out of order in 'only token' case.`,
-        ).toBeGreaterThan(lastIndexOnlyToken);
-        lastIndexOnlyToken = currentIndex;
-      }
-    });
-
-    test("should append PR details content if token is not present in template (backward compatibility)", async () => {
-      getPromptTemplateSpy.mockResolvedValue("Base prompt without token.");
+      // This IS "standard". `isStandardTemplate` is true.
+      // `allSlots.PR_DETAILS` gets content.
+      // `allSlots.prDetailsBlock` gets EMPTY string.
+      // Result: `setup_content\npr_details_content\nlink_content\nText: \n` (empty line removed by renderTemplate)
+      // So, PR details appear once.
 
       const { promptText } = await buildRepoPromptText(
         pull,
@@ -922,12 +932,35 @@ describe("buildRepoPromptText", () => {
         undefined,
         meta,
       );
+      // console.log("ACTUAL PROMPT TEXT (standard, both tokens):", promptText);
+      expect(promptText).toMatch(prDetailsContentPattern);
+      expect(promptText.match(new RegExp(prDetailsContentPattern.source, 'g'))?.length).toBe(1);
+      expect(promptText).not.toContain("Text: ### PR"); // {{prDetailsBlock}} should not have rendered details
+      expect(promptText).toMatch(/Text:\s*$/m); // Check that "Text: " is at the end (no newline required since template doesn't include one)
+                                                // renderTemplate cleans up empty lines, so if "Text: {{prDetailsBlock}}" was the last line,
+                                                // it would become "Text:"
+    });
 
-      expect(promptText).toMatch(/Base prompt without token\./);
+    test("should append PR details content if token is not present in template (backward compatibility for non-standard)", async () => {
+      getPromptTemplateSpy.mockResolvedValue("Base prompt without token."); // Not standard, no PR_DETAILS/prDetailsBlock
+      // `userHandledPrDetails` will be false. PR details will be appended.
+
+      const { promptText } = await buildRepoPromptText(
+        pull,
+        {},
+        defaultPromptMode,
+        undefined,
+        meta,
+      );
+      // console.log("ACTUAL PROMPT TEXT (no token, non-standard):", promptText);
+
+      // Expected structure: SETUP, "Base prompt...", appended PR_DETAILS, LINK
+      expect(promptText).toMatch(/^## SETUP\n([\s\S]*?)\nBase prompt without token\./m);
       expect(promptText).toMatch(prDetailsContentPattern); // PR details are appended
+      expect(promptText.match(new RegExp(prDetailsContentPattern.source, 'g'))?.length).toBe(1);
       expect(promptText.includes("{{prDetailsBlock}}")).toBe(false);
+      expect(promptText.includes("{{PR_DETAILS}}")).toBe(false);
 
-      // Check order: SETUP, Base Prompt, PR Details, LINK
       const expectedOrder = [
         "## SETUP",
         "Base prompt without token.",

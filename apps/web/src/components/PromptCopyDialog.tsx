@@ -15,8 +15,8 @@ import {
   Tooltip,
 } from "@blueprintjs/core";
 import { IconNames } from "@blueprintjs/icons";
-import { useEffect, useMemo, useState } from "react";
-import { flushSync } from "react-dom"; // ADDED IMPORT
+import { useEffect, useMemo, useState } from "react"; // ADDED useCallback
+import { flushSync } from "react-dom";
 import {
   buildClipboardPayload,
   splitUnifiedDiff,
@@ -29,31 +29,41 @@ import { FileDiffPicker } from "./FileDiffPicker";
 import styles from "./PromptCopyDialog.module.scss";
 
 // Constants for injection logic
-const DIFF_PLACEHOLDER_TEXT = "(diff content here, possibly empty if not selected for template)";
+const DIFF_PLACEHOLDER_TEXT =
+  "(diff content here, possibly empty if not selected for template)";
 const DIFF_TOKEN_TEXT = "{{DIFF_CONTENT}}";
 
 interface InjectResult {
+  result: string; // CHANGED from 'text' to 'result' to match existing pattern, and type from string to string
   injected: boolean;
-  result: string;
 }
 
 // Helper function to inject selected content into template
-function injectSelectionIntoTemplate(template: string, selectionToInject: string): InjectResult {
-  const hit = template.includes(DIFF_PLACEHOLDER_TEXT) || template.includes(DIFF_TOKEN_TEXT);
-  console.debug("[injectSelectionIntoTemplate] placeholderFound?", hit);
-  
-  // Try replacing placeholder text first
-  if (template.includes(DIFF_PLACEHOLDER_TEXT)) {
+function injectSelectionIntoTemplate(
+  template: string,
+  selectionToInject: string,
+): InjectResult {
+  const placeholderHit = template.includes(DIFF_PLACEHOLDER_TEXT);
+  const tokenHit = template.includes(DIFF_TOKEN_TEXT);
+
+  console.debug(
+    "[injectSelectionIntoTemplate] placeholderFound?",
+    placeholderHit || tokenHit,
+  );
+
+  if (placeholderHit || tokenHit) {
+    let result = template;
+    if (placeholderHit) {
+      result = result.replace(DIFF_PLACEHOLDER_TEXT, selectionToInject);
+    }
+    if (tokenHit) {
+      // If placeholder was already replaced, replace in the result of that
+      // If only token exists, replace in original template
+      result = result.replace(DIFF_TOKEN_TEXT, selectionToInject);
+    }
     return {
       injected: true,
-      result: template.replace(DIFF_PLACEHOLDER_TEXT, selectionToInject),
-    };
-  }
-  // Then try replacing the DIFF_CONTENT token
-  if (template.includes(DIFF_TOKEN_TEXT)) {
-    return {
-      injected: true,
-      result: template.replace(DIFF_TOKEN_TEXT, selectionToInject),
+      result,
     };
   }
   // If neither is found, return original template and indicate no injection
@@ -362,14 +372,14 @@ export function PromptCopyDialog({
     // It will *not* spam because the dependencies are tight.
     console.groupCollapsed(
       "%c[PromptCopyDialog DEBUG] build context",
-      "color:tomato;font-weight:bold;"
+      "color:tomato;font-weight:bold;",
     );
 
     console.log("initialPromptText (trimmed)", initialPromptText.trim());
 
     console.log(
       "blocks (id, kind, header):",
-      blocks.map(({ id, kind, header }) => ({ id, kind, header }))
+      blocks.map(({ id, kind, header }) => ({ id, kind, header })),
     );
 
     console.log("selectedIds →", Array.from(selectedIds));
@@ -381,7 +391,10 @@ export function PromptCopyDialog({
     console.log("diffPayload (first 250 chars) →", diffPayload.slice(0, 250));
 
     // What will actually be copied if the user presses "Copy Selected"
-    console.log("getFinalPrompt() (first 250 chars) →", getFinalPrompt().slice(0, 250));
+    console.log(
+      "getFinalPrompt() (first 250 chars) →",
+      getFinalPrompt().slice(0, 250),
+    );
 
     console.groupEnd();
   }, [

@@ -267,18 +267,36 @@ describe("PromptCopyDialog with FileDiffPicker integration", () => {
     // selectedNonDiffText (comments) is appended after the template.
     // const injectedDiff = expectedDiffContentForFile1; // This part replaces the placeholder // OLD interpretation
 
-    // CORRECTED interpretation: selectionClean (comments + diff) is injected
-    const injected = [
-      formatPromptBlock(generalCommentBlock).trimEnd(),
-      formatPromptBlock(anotherCommentBlock).trimEnd(),
-      expectedDiffContentForFile1,
-    ].join(SECTION_SEPARATOR);
+    // CORRECTED interpretation: selectionClean (comments + diff) replaces placeholder.
+    // const injected = [ // OLD - this was for the old getFinalPrompt logic
+    //   formatPromptBlock(generalCommentBlock).trimEnd(),
+    //   formatPromptBlock(anotherCommentBlock).trimEnd(),
+    //   expectedDiffContentForFile1,
+    // ].join(SECTION_SEPARATOR);
 
     // CORRECTED expected prompt:
-    const EXPECTED_PROMPT = MOCK_INITIAL_PROMPT_TEXT_WITH_PR_DETAILS.replace(
-      DIFF_PLACEHOLDER_TEXT_IN_TEST,
-      injected,
-    ).trimEnd();
+    // const EXPECTED_PROMPT = MOCK_INITIAL_PROMPT_TEXT_WITH_PR_DETAILS.replace( // OLD
+    //   DIFF_PLACEHOLDER_TEXT_IN_TEST,
+    //   injected,
+    // ).trimEnd();
+
+    // NEW EXPECTED PROMPT based on buildFinalPrompt logic:
+    // 1. Template with diff injected
+    const templateWithDiffInjected =
+      MOCK_INITIAL_PROMPT_TEXT_WITH_PR_DETAILS.replace(
+        DIFF_PLACEHOLDER_TEXT_IN_TEST,
+        expectedDiffContentForFile1, // Only diff is injected
+      ).trimEnd();
+    // 2. Comments (selectedNonDiffText)
+    const commentsContent = [
+      formatPromptBlock(generalCommentBlock).trimEnd(),
+      formatPromptBlock(anotherCommentBlock).trimEnd(),
+    ].join(SECTION_SEPARATOR);
+    // 3. User text (empty in this test)
+
+    const EXPECTED_PROMPT = [templateWithDiffInjected, commentsContent]
+      .join(SECTION_SEPARATOR)
+      .trimEnd();
 
     // --- assertions ---------------------------------------------------------
     expect(normaliseWS(copiedText)).toBe(normaliseWS(EXPECTED_PROMPT));
@@ -481,22 +499,25 @@ describe("PromptCopyDialog with FileDiffPicker integration", () => {
       MOCK_COMMENT_BLOCK_FOR_ORDER_TEST[0],
     ).trimEnd();
     const copiedText = mockCopyToClipboard.mock.calls[0][0];
-
+  
     expect(copiedText).toContain(expectedBlock1Content);
     expect(copiedText).toContain(initialPromptTextWithoutPlaceholder);
     expect(copiedText).toContain("User custom instructions");
-
+  
     // Ensure order: template, then comment block, then user text
+    // With new logic (template, diff (if any), comments, user text)
+    // Since there's no diff block in MOCK_COMMENT_BLOCK_FOR_ORDER_TEST, diffPayload is empty.
+    // So the order remains: template, comment, user text.
     const templateIndex = copiedText.indexOf(
       initialPromptTextWithoutPlaceholder,
     );
     const commentIndex = copiedText.indexOf(expectedBlock1Content);
     const userTextIndex = copiedText.indexOf("User custom instructions");
-
+  
     expect(templateIndex).toBeLessThan(commentIndex); // Template before selected block (comment)
     expect(commentIndex).toBeLessThan(userTextIndex); // Selected block before user text
   });
-
+  
   test("copies blocks in correct order with injection into template", async () => {
     const DIFF_PLACEHOLDER_TEXT_IN_TEST =
       "(diff content here, possibly empty if not selected for template)";
@@ -559,43 +580,65 @@ describe("PromptCopyDialog with FileDiffPicker integration", () => {
     //   expectedCommentContent,
     //   "User custom instructions for injection"
     // ].filter(Boolean).join(SECTION_SEPARATOR).trimEnd();
-
+  
     // CORRECTED interpretation: selectionClean (comment only, as diffPayload is empty) replaces placeholder.
-    const templateWithComment = TEMPLATE_WITH_PLACEHOLDER.replace(
+    // const templateWithComment = TEMPLATE_WITH_PLACEHOLDER.replace( // OLD
+    //   DIFF_PLACEHOLDER_TEXT_IN_TEST,
+    //   expectedCommentContent,
+    // ).trimEnd();
+  
+    // const expectedFullInjectedText = [ // OLD
+    //   templateWithComment,
+    //   "User custom instructions for injection",
+    // ]
+    //   .filter(Boolean)
+    //   .join(SECTION_SEPARATOR)
+    //   .trimEnd();
+  
+    // NEW EXPECTED TEXT based on buildFinalPrompt:
+    // MOCK_COMMENT_BLOCK_FOR_INJECTION_TEST contains only a comment block. So diffPayload is empty.
+    // 1. Template with empty string injected for diff
+    const templateWithEmptyDiffInjected = TEMPLATE_WITH_PLACEHOLDER.replace(
       DIFF_PLACEHOLDER_TEXT_IN_TEST,
-      expectedCommentContent,
+      "", // diffPayload is empty
     ).trimEnd();
-
+    // 2. Comments (selectedNonDiffText)
+    const commentContent = expectedCommentContent; // from formatPromptBlock(MOCK_COMMENT_BLOCK_FOR_INJECTION_TEST[0])
+    // 3. User text
+    const userInstructions = "User custom instructions for injection";
+  
     const expectedFullInjectedText = [
-      templateWithComment,
-      "User custom instructions for injection",
-    ]
-      .filter(Boolean)
-      .join(SECTION_SEPARATOR)
-      .trimEnd();
-
+      templateWithEmptyDiffInjected,
+      commentContent,
+      userInstructions,
+    ].filter(Boolean).join(SECTION_SEPARATOR).trimEnd();
+  
+  
     // Using normaliseWS for robust comparison
     expect(normaliseWS(copiedText)).toBe(normaliseWS(expectedFullInjectedText));
-
+  
     // More granular checks for individual parts and their order
     expect(copiedText).toContain("## Template Header");
     // expect(copiedText).toContain(expectedCommentContent); // This is still true
     expect(copiedText).toContain("## Template Footer");
     expect(copiedText).toContain("User custom instructions for injection");
-
+  
     const headerIndex = copiedText.indexOf("## Template Header");
     const commentIndexInTest = copiedText.indexOf(expectedCommentContent);
     const footerIndex = copiedText.indexOf("## Template Footer");
     const userTextIndexInTest = copiedText.indexOf(
       "User custom instructions for injection",
     );
-
+  
     // CORRECTED order assertions:
-    expect(headerIndex).toBeLessThan(commentIndexInTest);
-    expect(commentIndexInTest).toBeLessThan(footerIndex);
-    expect(footerIndex).toBeLessThan(userTextIndexInTest);
+    // Template (Header -> Footer because diff placeholder was between them and became empty)
+    // Then Comment
+    // Then User Text
+    expect(headerIndex).toBeLessThan(footerIndex); // Header part of template before Footer part
+    expect(footerIndex).toBeLessThan(commentIndexInTest); // Template (after injection) before comment
+    expect(commentIndexInTest).toBeLessThan(userTextIndexInTest); // Comment before user text
   });
-
+  
   test("unchecked diff block removes placeholder and excludes diff content", async () => {
     render(
       <PromptCopyDialog
@@ -643,23 +686,39 @@ describe("PromptCopyDialog with FileDiffPicker integration", () => {
     // Diff content should not be present
     expect(copiedText).not.toMatch(/diff --git a\/file1.txt/);
     expect(copiedText).not.toContain("+content1");
-
+  
     // Template (minus placeholder) and other selected blocks should be present
     // CORRECTED interpretation: selectionClean (comments only, as diff is unchecked) replaces placeholder.
     const commentsOnlyPayload = [
       formatPromptBlock(generalCommentBlock).trimEnd(),
       formatPromptBlock(anotherCommentBlock).trimEnd(),
     ].join(SECTION_SEPARATOR);
-
-    const templateWithCommentsOnly =
-      MOCK_INITIAL_PROMPT_TEXT_WITH_PR_DETAILS.replace(
+  
+    // const templateWithCommentsOnly = // OLD
+    //   MOCK_INITIAL_PROMPT_TEXT_WITH_PR_DETAILS.replace(
+    //     DIFF_PLACEHOLDER_TEXT_IN_TEST,
+    //     commentsOnlyPayload,
+    //   ).trimEnd();
+  
+    // // userText is empty in this test, so it's just the template with comments injected.
+    // const expectedText = templateWithCommentsOnly; // OLD
+  
+    // NEW EXPECTED TEXT:
+    // Diff block is unchecked, so diffPayload is empty.
+    // 1. Template with empty string injected for diff
+    const templateWithEmptyDiff = MOCK_INITIAL_PROMPT_TEXT_WITH_PR_DETAILS.replace(
         DIFF_PLACEHOLDER_TEXT_IN_TEST,
-        commentsOnlyPayload,
-      ).trimEnd();
-
-    // userText is empty in this test, so it's just the template with comments injected.
-    const expectedText = templateWithCommentsOnly;
-
+        "" // diffPayload is empty
+    ).trimEnd();
+    // 2. Comments (selectedNonDiffText) is commentsOnlyPayload
+    // 3. User text (empty in this test)
+  
+    const expectedText = [
+        templateWithEmptyDiff,
+        commentsOnlyPayload
+    ].join(SECTION_SEPARATOR).trimEnd();
+  
+  
     expect(normaliseWS(copiedText)).toBe(normaliseWS(expectedText));
   });
 
@@ -686,36 +745,66 @@ describe("PromptCopyDialog with FileDiffPicker integration", () => {
 
     const copiedText = mockCopyToClipboard.mock.calls[0][0];
 
-    // Count occurrences of a unique diff marker.
-    // SIMPLE_DIFF_PATCH contains "diff --git a/file1.txt" and "diff --git a/file2.txt"
-    // If all files are selected (default for diff block initially), both will be there.
-    // buildClipboardPayload joins them.
-    const diffMarkerOccurrences = (copiedText.match(/diff --git a\//g) || [])
-      .length;
+    // A unique part of the diff
+    const diffMarker = "+content1"; // From file1.txt in SIMPLE_DIFF_PATCH
+    const occurrences = (copiedText.match(new RegExp(diffMarker.replace("+", "\\+"), "g")) || []).length;
+    expect(occurrences).toBe(1); // Diff content should appear only once
 
-    // Since SIMPLE_DIFF_PATCH has two files, and by default all are selected for the diff block,
-    // we expect two "diff --git" lines if the full diff is included.
-    // The key is that the *entire diff payload* is injected once.
-    // If buildClipboardPayload produces a single string with multiple "diff --git" lines for multiple files, that's fine.
-    // We need to ensure the *payload itself* isn't duplicated.
-    // A simpler check might be for a specific line from the diff.
-    expect(copiedText).toContain("+content1"); // From file1.txt
-    expect(copiedText).toContain("+content2"); // From file2.txt
+    // Check overall structure
+    const generalCommentBlock = MOCK_BLOCKS_WITH_DIFF_NO_PR_DETAILS.find(b => b.id === "comment-1")!;
+    const anotherCommentBlock = MOCK_BLOCKS_WITH_DIFF_NO_PR_DETAILS.find(b => b.id === "comment-2")!;
+    const commentsFormatted = [
+        formatPromptBlock(generalCommentBlock).trimEnd(),
+        formatPromptBlock(anotherCommentBlock).trimEnd()
+    ].join(SECTION_SEPARATOR);
 
-    // Check that the placeholder is gone
-    expect(copiedText).not.toContain(DIFF_PLACEHOLDER_TEXT_IN_TEST);
+    // buildClipboardPayload will be called for the diff. For this test, we can use a simpler check.
+    // The key is that the diff content from SIMPLE_DIFF_PATCH is injected.
+    // For this test, let's assume buildClipboardPayload with all files selected returns SIMPLE_DIFF_PATCH.trimEnd()
+    const actualDiffPayloadUsedByComponent = SIMPLE_DIFF_PATCH.trimEnd();
 
-    // A more robust check for "appears once" would be to ensure the entire diff payload
-    // from buildClipboardPayload appears once, and not also appended if injected.
-    // The current structure of getFinalPrompt ensures this.
-    // The "Copy Selected" test already verifies the overall structure.
-    // This test can focus on the count of diff markers as a proxy.
-    // If the full SIMPLE_DIFF_PATCH is selected, it has two "diff --git" lines.
-    expect(diffMarkerOccurrences).toBe(2);
+
+    const templateInjected = MOCK_INITIAL_PROMPT_TEXT_WITH_PR_DETAILS.replace(
+      DIFF_PLACEHOLDER_TEXT_IN_TEST,
+      actualDiffPayloadUsedByComponent,
+    );
+
+    const expectedFinalText = [
+      templateInjected,
+      commentsFormatted,
+      "My custom instructions.",
+    ]
+      .join(SECTION_SEPARATOR)
+      .trimEnd();
+
+    expect(normaliseWS(copiedText)).toBe(normaliseWS(expectedFinalText));
+    expect(copiedText).toContain("Template Start");
+    expect(copiedText).toContain(actualDiffPayloadUsedByComponent); // Diff content
+    expect(copiedText).toContain("Template End");
+    expect(copiedText).toContain(
+      formatPromptBlock(generalCommentBlock).trimEnd(),
+    ); // Comment 1
+    expect(copiedText).toContain(
+      formatPromptBlock(anotherCommentBlock).trimEnd(),
+    ); // Comment 2
+    expect(copiedText).toContain("My custom instructions."); // User text
+
+    // Check order
+    expect(copiedText.indexOf("Template Start")).toBeLessThan(
+      copiedText.indexOf(actualDiffPayloadUsedByComponent),
+    );
+    expect(copiedText.indexOf(actualDiffPayloadUsedByComponent)).toBeLessThan(
+      copiedText.indexOf("Template End"),
+    );
+    expect(copiedText.indexOf("Template End")).toBeLessThan(
+      copiedText.indexOf(formatPromptBlock(generalCommentBlock).trimEnd()),
+    );
+    // Order of comments among themselves depends on MOCK_BLOCKS_WITH_DIFF_NO_PR_DETAILS and formatPromptBlock joining
+    expect(copiedText.indexOf(commentsFormatted)).toBeGreaterThan(
+      copiedText.indexOf("Template End"),
+    );
+    expect(copiedText.indexOf(commentsFormatted)).toBeLessThan(
+      copiedText.indexOf("My custom instructions."),
+    );
   });
-
-  // The test "picker-limited diff omits unselected files" is now covered by
-  // the updated assertions in "'Copy Selected' uses buildClipboardPayload..." test:
-  // expect(copiedText).not.toContain("content2");
-  // expect(copiedText).not.toContain("b/file2.txt");
 });

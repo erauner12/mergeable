@@ -198,7 +198,7 @@ describe("buildRepoPromptText", () => {
       authorAvatarUrl: "avatar.url",
       timestamp: "2024-01-01T00:00:00Z",
     } as CommentBlockInput;
-    expect(slots.PR_DETAILS).toBe(formatPromptBlock(prDetailsBlock).trim());
+    expect(slots.PR_DETAILS).toBe(formatPromptBlock(prDetailsBlock));
 
     expect(slots.DIFF_CONTENT).toBe("");
     expect(slots.LINK).toBe("🔗 https://github.com/owner/myrepo/pull/123");
@@ -858,6 +858,9 @@ describe("buildRepoPromptText", () => {
 
   // New Test Case A: "review" mode + comments requested
   it("should use review prompt and include comments for 'review' mode when requested", async () => {
+    // Override the mock for this specific test
+    getPromptTemplateSpy.mockResolvedValueOnce("MOCK_PROMPT_FOR_REVIEW");
+    
     const pull = mockPull({
       number: 201,
       repo: "owner/reviewrepo",
@@ -896,6 +899,9 @@ describe("buildRepoPromptText", () => {
 
   // New Test Case B: "adjust-pr" mode should not auto-select comments/diffs for promptText
   it("should only include PR details in initial promptText for 'adjust-pr' mode, even if diffs/comments are requested via options", async () => {
+    // Override the mock for this specific test - use a template with slots so diff content gets included
+    getPromptTemplateSpy.mockResolvedValueOnce("MOCK_PROMPT_FOR_ADJUST-PR\n{{DIFF_CONTENT}}");
+    
     const pull = mockPull({
       number: 202,
       repo: "owner/adjustrepo",
@@ -948,6 +954,9 @@ describe("buildRepoPromptText", () => {
 
   // New Test Case C: "respond" mode with comments only
   it("should not call getPullRequestDiff for 'respond' mode if only comments are included", async () => {
+    // Override the mock for this specific test
+    getPromptTemplateSpy.mockResolvedValueOnce("MOCK_PROMPT_FOR_RESPOND");
+    
     const pull = mockPull({
       number: 203,
       repo: "owner/respondrepo",

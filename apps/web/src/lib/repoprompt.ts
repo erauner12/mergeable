@@ -502,13 +502,48 @@ export async function buildRepoPromptText(
   const linkString = `🔗 ${pull.url.includes("/pull/") ? pull.url : `https://github.com/${owner}/${repo}/pull/${pull.number}`}`;
   const mainTemplateString = await getPromptTemplate(mode);
 
-  const promptText = renderTemplate(mainTemplateString, {
+  // Check if template contains the prDetailsBlock token
+  const hasTokenInTemplate = mainTemplateString.includes('{{prDetailsBlock}}');
+  
+  // Check if this is a standard template (contains standard slots)
+  const isStandardTemplate = mainTemplateString.includes('{{SETUP}}') && 
+                             mainTemplateString.includes('{{PR_DETAILS}}') && 
+                             mainTemplateString.includes('{{LINK}}');
+  
+  // Render the template with slots including prDetailsBlock support
+  const renderedTemplate = renderTemplate(mainTemplateString, {
     SETUP: setupString,
     PR_DETAILS: prDetailsString,
     DIFF_CONTENT: diffContentString,
     LINK: linkString,
     prDetailsBlock: prDetailsString, // Add support for {{prDetailsBlock}} token
   });
+
+  let promptText: string;
+  
+  if (isStandardTemplate) {
+    // For standard templates, just return the rendered content
+    promptText = renderedTemplate;
+  } else {
+    // For custom templates, use the structured approach with SETUP/LINK sections
+    const promptSections = [];
+    
+    // Always include SETUP section
+    promptSections.push(`## SETUP\n${setupString}`);
+    
+    // Add the rendered template content
+    promptSections.push(renderedTemplate);
+    
+    // For backward compatibility: if template didn't contain {{prDetailsBlock}}, append PR details
+    if (!hasTokenInTemplate) {
+      promptSections.push(prDetailsString);
+    }
+    
+    // Always include LINK section
+    promptSections.push(linkString);
+    
+    promptText = promptSections.join('\n\n');
+  }
 
   const uniqueAllPromptBlocks = Array.from(
     new Map(allPromptBlocks.map((b) => [b.id, b])).values(),

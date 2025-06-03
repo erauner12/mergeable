@@ -204,10 +204,11 @@ describe("buildRepoPromptText - Contract Tests", () => {
 
     it("produces a prompt by calling renderTemplate once with all required non-empty slots, and has correct headers", async () => {
       const { mockPullInstance, mockMeta, spies } = context;
+      const diffOptions = { includePr: true, includeComments: true };
 
       const { promptText, blocks } = await buildRepoPromptText(
         mockPullInstance,
-        { includePr: true, includeComments: true }, // Include options to exercise more code paths
+        diffOptions, // Include options to exercise more code paths
         mode,
         { auth: "test-token", baseUrl: "https://api.github.com" }, // Mock endpoint
         mockMeta,
@@ -287,11 +288,21 @@ describe("buildRepoPromptText - Contract Tests", () => {
       // 6. LINK check
       expect(slotsSupplied.LINK).toContain(mockPullInstance.url);
 
-      // 7. Blocks array should contain PR details
-      const prDetailsBlock = blocks.find(b => b.id.startsWith('pr-details-'));
-      expect(prDetailsBlock).toBeDefined();
-      if (prDetailsBlock && prDetailsBlock.kind === 'comment') {
-        expect(prDetailsBlock.commentBody).toBe(strippedBody);
+      // 7. Blocks array should NOT contain PR details block, but should contain other fetched blocks (e.g., comments if includeComments=true)
+      const prDetailsBlockInArray = blocks.find(b => b.id.startsWith('pr-details-'));
+      expect(prDetailsBlockInArray, "PR Details block should not be in the returned 'blocks' array").toBeUndefined();
+      
+      // If comments were included, they should be in the blocks array
+      if (spies.fetchPullCommentsSpy.mock.calls.length > 0) {
+        const mockComments = await spies.fetchPullCommentsSpy.mock.results[0].value;
+        if (mockComments.length > 0) {
+          expect(blocks.some(b => b.id === mockComments[0].id)).toBe(true);
+        }
+      }
+      // Diff block should be present if includePr was true
+      if (diffOptions.includePr) {
+          const diffBlockInArray = blocks.find(b => b.kind === 'diff' && b.id.startsWith('diff-pr-'));
+          expect(diffBlockInArray, "PR Diff block should be in the returned 'blocks' array if includePr is true").toBeDefined();
       }
     });
 

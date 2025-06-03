@@ -58,9 +58,9 @@ index 0000000..2222222 100644
 +content2
 `;
 
-const MOCK_BLOCKS_WITH_DIFF: PromptBlock[] = [
+const MOCK_BLOCKS_WITH_DIFF_NO_PR_DETAILS: PromptBlock[] = [ // Renamed, PR details won't be here
   {
-    id: "1",
+    id: "comment-1", // Changed ID to be more specific
     kind: "comment",
     header: "### General Comment",
     commentBody: "A general comment.",
@@ -74,7 +74,7 @@ const MOCK_BLOCKS_WITH_DIFF: PromptBlock[] = [
     patch: SIMPLE_DIFF_PATCH,
   },
   {
-    id: "3",
+    id: "comment-2", // Changed ID
     kind: "comment",
     header: "### Another Comment",
     commentBody: "Another comment.",
@@ -82,6 +82,29 @@ const MOCK_BLOCKS_WITH_DIFF: PromptBlock[] = [
     timestamp: new Date().toISOString(),
   },
 ];
+
+// This will be the `promptText` from buildRepoPromptText, containing PR details via template
+const MOCK_INITIAL_PROMPT_TEXT_WITH_PR_DETAILS = `
+## SETUP
+cd /path/to/repo
+git checkout main
+
+### PR details
+PR #123 DETAILS: Test PR Title
+> _testauthor · 2024-Jan-01_
+
+This is the PR body.
+
+### files changed
+- file1.txt
+- file2.txt
+
+### diff
+(diff content here, possibly empty if not selected for template)
+
+🔗 https://github.com/owner/repo/pull/123
+`.trim();
+
 
 describe("PromptCopyDialog with FileDiffPicker integration", () => {
   let originalClipboard: typeof navigator.clipboard;
@@ -124,8 +147,8 @@ describe("PromptCopyDialog with FileDiffPicker integration", () => {
     render(
       <PromptCopyDialog
         isOpen={true}
-        initialPromptText=""
-        blocks={MOCK_BLOCKS_WITH_DIFF}
+        initialPromptText={MOCK_INITIAL_PROMPT_TEXT_WITH_PR_DETAILS} // Pass initial prompt text
+        blocks={MOCK_BLOCKS_WITH_DIFF_NO_PR_DETAILS} // Use blocks without PR details
         onClose={() => {}}
         prTitle="Test PR"
       />,
@@ -141,14 +164,14 @@ describe("PromptCopyDialog with FileDiffPicker integration", () => {
     render(
       <PromptCopyDialog
         isOpen={true}
-        initialPromptText=""
-        blocks={MOCK_BLOCKS_WITH_DIFF}
+        initialPromptText={MOCK_INITIAL_PROMPT_TEXT_WITH_PR_DETAILS}
+        blocks={MOCK_BLOCKS_WITH_DIFF_NO_PR_DETAILS}
         onClose={() => {}}
         prTitle="My Awesome PR"
       />,
     );
 
-    fireEvent.click(screen.getByTestId("choose-files-diff-1")); // MODIFIED
+    fireEvent.click(screen.getByTestId("choose-files-diff-1"));
     expect(screen.getByText("FileDiffPickerMock")).toBeInTheDocument();
     expect(
       screen.getByText("Title: Choose files for: My Awesome PR"),
@@ -162,7 +185,7 @@ describe("PromptCopyDialog with FileDiffPicker integration", () => {
     });
   });
 
-  test("'Copy Selected' uses buildClipboardPayload for selected diff block", async () => {
+  test("'Copy Selected' uses buildClipboardPayload for selected diff block and combines with initialPromptText", async () => {
     const buildClipboardPayloadSpy = vi.spyOn(
       DiffUtils,
       "buildClipboardPayload",
@@ -171,14 +194,14 @@ describe("PromptCopyDialog with FileDiffPicker integration", () => {
     render(
       <PromptCopyDialog
         isOpen={true}
-        initialPromptText=""
-        blocks={MOCK_BLOCKS_WITH_DIFF}
+        initialPromptText={MOCK_INITIAL_PROMPT_TEXT_WITH_PR_DETAILS}
+        blocks={MOCK_BLOCKS_WITH_DIFF_NO_PR_DETAILS}
         onClose={() => {}}
       />,
     );
 
     // Open picker and select 1 file
-    fireEvent.click(screen.getByTestId("choose-files-diff-1")); // MODIFIED
+    fireEvent.click(screen.getByTestId("choose-files-diff-1"));
     fireEvent.click(screen.getByText("Confirm Picker (1 file)"));
     await waitFor(() =>
       expect(screen.queryByText("FileDiffPickerMock")).not.toBeInTheDocument(),
@@ -203,16 +226,26 @@ describe("PromptCopyDialog with FileDiffPicker integration", () => {
 
     const copiedText = mockCopyToClipboard.mock.calls[0][0];
     // MODIFIED: Use formatPromptBlock for comment block expectations
-    const generalCommentBlock = MOCK_BLOCKS_WITH_DIFF.find(
-      (b) => b.id === "1",
+    const generalCommentBlock = MOCK_BLOCKS_WITH_DIFF_NO_PR_DETAILS.find(
+      (b) => b.id === "comment-1", // Use updated ID
     )!;
-    const anotherCommentBlock = MOCK_BLOCKS_WITH_DIFF.find(
-      (b) => b.id === "3",
+    const anotherCommentBlock = MOCK_BLOCKS_WITH_DIFF_NO_PR_DETAILS.find(
+      (b) => b.id === "comment-2", // Use updated ID
     )!;
+    
+    // The selected blocks' content (comments + processed diff) should appear first
     expect(copiedText).toContain(formatPromptBlock(generalCommentBlock).trimEnd());
     expect(copiedText).toContain(formatPromptBlock(anotherCommentBlock).trimEnd());
     // The diff block's content will be the result of buildClipboardPayload
     // We don't check its exact content here, just that the spy was called.
+
+    // Then the initialPromptText (which contains PR details from template) should follow
+    expect(copiedText).toContain(MOCK_INITIAL_PROMPT_TEXT_WITH_PR_DETAILS);
+    
+    // Ensure PR details are not duplicated (they should only come from initialPromptText)
+    const prDetailsHeaderCount = (copiedText.match(/### PR details/g) ?? []).length;
+    expect(prDetailsHeaderCount).toBe(1);
+
 
     buildClipboardPayloadSpy.mockRestore();
   });
@@ -226,13 +259,13 @@ describe("PromptCopyDialog with FileDiffPicker integration", () => {
     render(
       <PromptCopyDialog
         isOpen={true}
-        initialPromptText=""
-        blocks={MOCK_BLOCKS_WITH_DIFF}
+        initialPromptText={MOCK_INITIAL_PROMPT_TEXT_WITH_PR_DETAILS}
+        blocks={MOCK_BLOCKS_WITH_DIFF_NO_PR_DETAILS}
         onClose={() => {}}
       />,
     );
 
-    fireEvent.click(screen.getByTestId("choose-files-diff-1")); // MODIFIED
+    fireEvent.click(screen.getByTestId("choose-files-diff-1"));
     fireEvent.click(screen.getByText("Confirm Picker (1 file)"));
     await waitFor(() =>
       expect(screen.queryByText("FileDiffPickerMock")).not.toBeInTheDocument(),
@@ -283,8 +316,8 @@ describe("PromptCopyDialog with FileDiffPicker integration", () => {
     render(
       <PromptCopyDialog
         isOpen={true}
-        initialPromptText=""
-        blocks={MOCK_BLOCKS_WITH_DIFF}
+        initialPromptText={MOCK_INITIAL_PROMPT_TEXT_WITH_PR_DETAILS}
+        blocks={MOCK_BLOCKS_WITH_DIFF_NO_PR_DETAILS}
         onClose={() => {}}
       />,
     );
@@ -328,8 +361,8 @@ describe("PromptCopyDialog with FileDiffPicker integration", () => {
     const { rerender } = render(
       <PromptCopyDialog
         isOpen={true}
-        initialPromptText=""
-        blocks={MOCK_BLOCKS_WITH_DIFF}
+        initialPromptText={MOCK_INITIAL_PROMPT_TEXT_WITH_PR_DETAILS}
+        blocks={MOCK_BLOCKS_WITH_DIFF_NO_PR_DETAILS}
         onClose={mockOnClose}
       />,
     );
@@ -348,8 +381,8 @@ describe("PromptCopyDialog with FileDiffPicker integration", () => {
     rerender(
       <PromptCopyDialog
         isOpen={true}
-        initialPromptText=""
-        blocks={MOCK_BLOCKS_WITH_DIFF}
+        initialPromptText={MOCK_INITIAL_PROMPT_TEXT_WITH_PR_DETAILS}
+        blocks={MOCK_BLOCKS_WITH_DIFF_NO_PR_DETAILS}
         onClose={mockOnClose}
       />,
     );
@@ -370,8 +403,8 @@ describe("PromptCopyDialog with FileDiffPicker integration", () => {
     rerender(
       <PromptCopyDialog
         isOpen={false} // Now closed
-        initialPromptText=""
-        blocks={MOCK_BLOCKS_WITH_DIFF}
+        initialPromptText={MOCK_INITIAL_PROMPT_TEXT_WITH_PR_DETAILS}
+        blocks={MOCK_BLOCKS_WITH_DIFF_NO_PR_DETAILS}
         onClose={mockOnClose}
       />,
     );
@@ -379,8 +412,8 @@ describe("PromptCopyDialog with FileDiffPicker integration", () => {
     rerender(
       <PromptCopyDialog
         isOpen={true}
-        initialPromptText=""
-        blocks={MOCK_BLOCKS_WITH_DIFF}
+        initialPromptText={MOCK_INITIAL_PROMPT_TEXT_WITH_PR_DETAILS}
+        blocks={MOCK_BLOCKS_WITH_DIFF_NO_PR_DETAILS}
         onClose={mockOnClose}
       />,
     );
@@ -401,7 +434,7 @@ describe("PromptCopyDialog with FileDiffPicker integration", () => {
   test("Handles no diff block gracefully", () => {
     const blocksWithoutDiff: PromptBlock[] = [
       {
-        id: "1",
+        id: "comment-only-1", // Specific ID
         kind: "comment",
         header: "### Comment Only",
         commentBody: "No diff here.",
@@ -412,7 +445,7 @@ describe("PromptCopyDialog with FileDiffPicker integration", () => {
     render(
       <PromptCopyDialog
         isOpen={true}
-        initialPromptText=""
+        initialPromptText={MOCK_INITIAL_PROMPT_TEXT_WITH_PR_DETAILS} // Still provide initial prompt
         blocks={blocksWithoutDiff}
         onClose={() => {}}
       />,
@@ -424,11 +457,11 @@ describe("PromptCopyDialog with FileDiffPicker integration", () => {
 
     // Copy selected should still work
     fireEvent.click(screen.getByText("Copy Selected"));
-    // MODIFIED: Use formatPromptBlock for expectation
-    const commentOnlyBlock = blocksWithoutDiff[0];
-    expect(mockCopyToClipboard).toHaveBeenCalledWith(
-      formatPromptBlock(commentOnlyBlock).trimEnd(),
-    );
+
+    const commentOnlyBlockFormatted = formatPromptBlock(blocksWithoutDiff[0]).trimEnd();
+    const expectedCombined = `${commentOnlyBlockFormatted}\n\n${MOCK_INITIAL_PROMPT_TEXT_WITH_PR_DETAILS}`;
+    
+    expect(mockCopyToClipboard).toHaveBeenCalledWith(expectedCombined);
   });
 });
 
@@ -523,11 +556,11 @@ describe("PromptCopyDialog with initialPromptText", () => {
   });
 
   test("combines selected blocks, user text, and initialPromptText in correct order", async () => {
-    const MOCK_BLOCK_TEXT_ONLY: PromptBlock[] = [
+    const MOCK_COMMENT_BLOCK_FOR_ORDER_TEST: PromptBlock[] = [ // Renamed
       {
         id: "text1",
         kind: "comment",
-        header: "### Block 1",
+        header: "### Block 1 Header For Order Test", // More specific header
         commentBody: "Content of block 1.",
         author: "test",
         timestamp: new Date().toISOString(),
@@ -536,8 +569,8 @@ describe("PromptCopyDialog with initialPromptText", () => {
     render(
       <PromptCopyDialog
         {...baseProps}
-        blocks={MOCK_BLOCK_TEXT_ONLY}
-        initialPromptText="Footer Template"
+        blocks={MOCK_COMMENT_BLOCK_FOR_ORDER_TEST} // Use new mock
+        initialPromptText="Footer Template For Order Test" // More specific
       />,
     );
 
@@ -552,21 +585,24 @@ describe("PromptCopyDialog with initialPromptText", () => {
     fireEvent.click(getCopyButton());
 
     // MODIFIED: Use formatPromptBlock for expectedBlock1Content
-    const expectedBlock1Content = formatPromptBlock(MOCK_BLOCK_TEXT_ONLY[0]);
+    const expectedBlock1Content = formatPromptBlock(MOCK_COMMENT_BLOCK_FOR_ORDER_TEST[0]);
     const expectedUserText = "User custom instructions";
-    const expectedInitialPromptText = "Footer Template";
+    const expectedInitialPromptText = "Footer Template For Order Test";
 
     await waitFor(() => {
       const copiedText = mockCopyToClipboard.mock.calls[0]?.[0] as string;
       expectOrder(
         copiedText,
         // Use header for order check if full block with metadata is too complex for simple order
-        MOCK_BLOCK_TEXT_ONLY[0].header,
+        MOCK_COMMENT_BLOCK_FOR_ORDER_TEST[0].header, // Check with specific header
         expectedInitialPromptText,
         expectedUserText,
       );
       // Optionally, also check if the full formatted block is present
-      expect(copiedText).toContain(expectedBlock1Content);
+      expect(copiedText).toContain(expectedBlock1Content); // Check with specific content
+      // Ensure PR details are not duplicated (they should only come from initialPromptText)
+      // This test case's initialPromptText doesn't have "### PR details", so this check is not applicable here.
+      // Other tests cover the PR details from initialPromptText.
     });
   });
 
@@ -580,7 +616,9 @@ describe("PromptCopyDialog with initialPromptText", () => {
       timestamp: "2024-01-01T00:00:00Z",
     };
     // MODIFIED: Use formatPromptBlock for blockB1Formatted
+    console.log('DEBUG: blockB1 before formatPromptBlock:', JSON.stringify(blockB1));
     const blockB1Formatted = formatPromptBlock(blockB1);
+    console.log('DEBUG: blockB1Formatted result:', JSON.stringify(blockB1Formatted));
 
     // Case 1: Only blocks and template (user text is empty)
     mockCopyToClipboard.mockClear();
@@ -588,14 +626,15 @@ describe("PromptCopyDialog with initialPromptText", () => {
       <PromptCopyDialog
         {...baseProps}
         blocks={[blockB1]}
-        initialPromptText="TemplateOnly"
+        initialPromptText="TemplateOnly" // This is the promptText from buildRepoPromptText
       />,
     );
     fireEvent.click(getCopyButton());
     await waitFor(() => {
       const copiedText = mockCopyToClipboard.mock.calls[0]?.[0] as string;
-      expectOrder(copiedText, blockB1.header, "TemplateOnly");
-      expect(copiedText).toContain(blockB1Formatted); // Ensure full block is there
+      // Expected: block content, then two newlines, then template content
+      const expected = `${blockB1Formatted.trimEnd()}\n\nTemplateOnly`;
+      expect(copiedText).toBe(expected);
     });
 
     // Case 2: Only user text and template (blocks are empty)
@@ -614,7 +653,9 @@ describe("PromptCopyDialog with initialPromptText", () => {
     fireEvent.click(getCopyButton());
     await waitFor(() => {
       const copiedText = mockCopyToClipboard.mock.calls[0]?.[0] as string;
-      expectOrder(copiedText, "TemplateAgain", "User Instructions");
+      // Expected: template content, then two newlines, then user instructions
+      const expected = `TemplateAgain\n\nUser Instructions`;
+      expect(copiedText).toBe(expected);
     });
 
     // Case 3: Only blocks and user text (initialPromptText is empty)
@@ -658,7 +699,10 @@ describe("PromptCopyDialog with initialPromptText", () => {
     fireEvent.click(getCopyButton());
     await waitFor(() => {
       // MODIFIED: Use new blockB1Formatted
-      expect(mockCopyToClipboard).toHaveBeenCalledWith(blockB1Formatted);
+      // When only blocks are present, getFinalPrompt returns blockB1Formatted (which includes its own trailing newline)
+      // and then the .trimEnd() in getFinalPrompt for the "onlySelection" case might remove it if hadUserTextEver is false.
+      // If hadUserTextEver is false (as it is here), it returns selectionTrimmed.
+      expect(mockCopyToClipboard).toHaveBeenCalledWith(blockB1Formatted.trimEnd());
     });
 
     // Case 5: Only user text (blocks and template are empty)

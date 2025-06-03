@@ -13,8 +13,12 @@ export function stripFilesListSection(text: string): string {
   }
   // Regex to find "### files changed (digits)" and capture everything
   // until a double newline (blank line) or end of string.
-  // It handles optional leading/trailing whitespace on the header line.
-  // It's multiline and non-greedy for the content.
-  const filesListRegex = /^\s*### files changed\s*\(\d+\)\s*$[\r\n]+([\s\S]*?)(?=(\r?\n\s*){2,}|$)/gm;
+  // - Allows optional whitespace around "### files changed" and digits.
+  // - Allows any characters on the header line after the count (e.g., extra titles).
+  // - Matches one or more lines starting with '*' or '-' (bullet points), possibly indented.
+  // - Non-greedy match for the list items.
+  // - Multiline and case-insensitive for "### files changed".
+  const filesListRegex =
+    /^###\s*files changed\s*\(\d+\)[^\r\n]*[\r\n]+(?:^[\t ]*[-*]\s+.*\s*[\r\n]*)+/gim;
   return text.replace(filesListRegex, "").trim();
 }

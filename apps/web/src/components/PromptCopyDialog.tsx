@@ -245,7 +245,7 @@ export function PromptCopyDialog({
   };
 
   const currentSelectedText = useMemo(() => {
-    return blocks
+    const result = blocks
       .filter((block) => selectedIds.has(block.id))
       .map((block) => {
         if (
@@ -260,9 +260,15 @@ export function PromptCopyDialog({
             patches: diffPatchData.patches,
           });
         }
-        return formatPromptBlock(block);
+        // DEBUG: Log the block and result
+        console.log('DEBUG currentSelectedText: block =', JSON.stringify(block));
+        const formatted = formatPromptBlock(block);
+        console.log('DEBUG currentSelectedText: formatPromptBlock result =', JSON.stringify(formatted));
+        return formatted;
       })
       .join("\n");
+    console.log('DEBUG currentSelectedText: final result =', JSON.stringify(result));
+    return result;
   }, [blocks, selectedIds, diffPatchData, selectedFilePaths]);
 
   const getFinalPrompt = (): string => {

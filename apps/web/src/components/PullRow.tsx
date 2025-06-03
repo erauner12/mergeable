@@ -100,10 +100,8 @@ export default function PullRow({ pull, sizes }: PullRowProps) {
       // Determine initially selected block IDs for PromptCopyDialog
       const newInitialSelectedBlockIds = new Set<string>();
       allPromptBlocks.forEach((block) => {
-        if (block.id.startsWith("pr-details")) {
-          // PR details always selected
-          newInitialSelectedBlockIds.add(block.id);
-        } else if (isDiffBlock(block)) {
+        // NOTE: PR details blocks are no longer added to allPromptBlocks - they're only in template slots
+        if (isDiffBlock(block)) {
           if (diffOpts?.includePr && block.id.startsWith("diff-pr")) {
             newInitialSelectedBlockIds.add(block.id);
           }

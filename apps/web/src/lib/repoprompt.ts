@@ -414,23 +414,19 @@ export async function buildRepoPromptText(
   }
 
 
-  // PR Details Block (always first in allPromptBlocks, content for PR_DETAILS slot)
+  // PR Details Block (content for PR_DETAILS slot, but no longer added to allPromptBlocks)
   const prDetailsCommentBody = originalPrBody; // Already stripped
-  const prDetailsBlock: CommentBlockInput = {
-    id: `pr-details-${pull.id}`,
+  const prDetailsBlockForSlotFormatting: CommentBlockInput = { // Renamed to clarify its purpose
+    id: `pr-details-${pull.id}`, // ID is still useful for potential direct formatting if needed elsewhere
     kind: "comment",
-    // The header for this block is now part of the template via {{PR_DETAILS}}'s surrounding markdown
-    // However, formatPromptBlock expects a header. We can make it minimal or rely on template structure.
-    // For consistency with how formatPromptBlock works, let's keep a header here.
-    // The template will have its own "### PR details" header.
-    header: `PR #${pull.number} DETAILS: ${pull.title}`, // This header is for the block data structure
+    header: `PR #${pull.number} DETAILS: ${pull.title}`,
     commentBody: prDetailsCommentBody,
     author: pull.author?.name ?? "unknown",
     authorAvatarUrl: pull.author?.avatarUrl,
     timestamp: pull.createdAt,
   };
-  pushUnique(allPromptBlocks, prDetailsBlock, (b) => b.id);
-  // pushUnique(initiallySelectedBlocks, prDetailsBlock, (b) => b.id); // Not used for promptText construction
+  // pushUnique(allPromptBlocks, prDetailsBlockForSlotFormatting, (b) => b.id); // REMOVED: PR details block is not added to the selectable blocks list.
+  // It's rendered into the prompt via slots only.
 
   // Prepare content for template slots
   const setupString = [
@@ -439,7 +435,7 @@ export async function buildRepoPromptText(
     `git checkout ${branch}`,
   ].join("\n");
 
-  const prDetailsString = formatPromptBlock(prDetailsBlock); // This will format the PR details with its own header
+  const prDetailsString = formatPromptBlock(prDetailsBlockForSlotFormatting); // Format for slot insertion
   const diffContentString = embeddedDiffStrings.join("\n\n").trim();
   const linkString = `🔗 ${pull.url.includes("/pull/") ? pull.url : `https://github.com/${owner}/${repo}/pull/${pull.number}`}`;
   

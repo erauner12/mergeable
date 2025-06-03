@@ -258,6 +258,12 @@ export async function buildRepoPromptText(
   let endpoint: Endpoint | undefined;
   let meta: ResolvedPullMeta | undefined;
   const diffOptions: DiffOptions = diffOptionsArg || {};
+
+  // Guard-rail: if both full PR and last commit diffs are requested, drop last commit.
+  if (diffOptions.includePr && diffOptions.includeLastCommit) {
+    diffOptions.includeLastCommit = false;
+  }
+
   if (
     typeof modeOrEndpoint === "string" &&
     (modeOrEndpoint === "implement" ||
@@ -286,18 +292,39 @@ export async function buildRepoPromptText(
     );
   }
 
-  const { owner, repo, branch, rootPath } = meta;
+  const { owner, repo, branch, rootPath } = meta; // files are also in meta
   const token = endpoint?.auth;
 
   const allPromptBlocks: PromptBlock[] = [];
   const initiallySelectedBlocks: PromptBlock[] = []; // For generating the initial promptText
 
   // 0. PR Details Block (always first, always initially selected)
+  let prBodyContent = pull.body?.trim() || "_No description provided._";
+
+  // Add "files changed" list to PR body if full PR diff is not included and files exist
+  const filesAlreadyListed = /### files changed \(\d+\)/.test(prBodyContent); // ADDED GUARD
+
+  if (
+    !diffOptions.includePr &&
+    meta.files &&
+    meta.files.length > 0 &&
+    !filesAlreadyListed // ADDED GUARD CONDITION
+  ) {
+    const filesChangedHeader = `### files changed (${meta.files.length})`;
+    const filesList = meta.files.map((f) => `- ${f}`).join("\n");
+    // Ensure there's a separation if prBodyContent is not empty or just the placeholder
+    const separator =
+      prBodyContent && prBodyContent !== "_No description provided._"
+        ? "\n\n"
+        : "";
+    prBodyContent = `${prBodyContent}${separator}${filesChangedHeader}\n${filesList}`;
+  }
+
   const prDetailsBlock: CommentBlockInput = {
     id: `pr-details-${pull.id}`,
     kind: "comment",
     header: `### PR #${pull.number} DETAILS: ${pull.title}`,
-    commentBody: pull.body?.trim() || "_No description provided._",
+    commentBody: prBodyContent, // Use the potentially modified body
     author: pull.author?.name ?? "unknown",
     authorAvatarUrl: pull.author?.avatarUrl,
     timestamp: pull.createdAt,

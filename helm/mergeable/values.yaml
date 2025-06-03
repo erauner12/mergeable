@@ -4,7 +4,7 @@ image:
   repository: ghcr.io/erauner12/mergeable
   pullPolicy: Always
   # Tag is overridden by CI before publishing the Helm Chart.
-  tag: "d35221a-20250602193518"
+  tag: "2a40eb6-20250602232502"
 
 imagePullSecrets: []
 nameOverride: ""

@@ -120,22 +120,26 @@ describe("buildRepoPromptUrl", () => {
 
 describe("buildRepoPromptText", () => {
   let logRepoPromptCallSpy!: ReturnType<typeof vi.spyOn>; // Corrected definite assignment
-  const mockResolvedMeta: ResolvedPullMeta = {
+  const mockResolvedMetaBase: ResolvedPullMeta = {
     owner: "owner",
     repo: "myrepo",
     branch: "feature-branch",
     files: ["src/main.ts", "README.md"],
     rootPath: "/tmp/myrepo",
   };
+  const mockResolvedMeta = mockResolvedMetaBase; // Alias for existing test code
   // Loosen the type even more – any mock instance is fine for tests
   let getPromptTemplateSpy: any;
+  let listPrCommitsSpy: any;
+  let getPullRequestDiffSpy: any;
+
 
   beforeEach(() => {
-    vi.spyOn(gh, "getPullRequestDiff").mockResolvedValue(
+    getPullRequestDiffSpy = vi.spyOn(gh, "getPullRequestDiff").mockResolvedValue(
       "dummy pr diff content",
     );
     vi.mocked(gh.fetchPullComments).mockResolvedValue([]); // Default mock for new function
-    vi.spyOn(gh, "listPrCommits").mockResolvedValue([]);
+    listPrCommitsSpy = vi.spyOn(gh, "listPrCommits").mockResolvedValue([]);
     vi.spyOn(gh, "getCommitDiff").mockResolvedValue(
       "dummy commit diff content",
     );
@@ -160,7 +164,7 @@ describe("buildRepoPromptText", () => {
     vi.clearAllMocks();
   });
 
-  it("should build prompt text with only PR details if options are empty", async () => {
+  it("should build prompt text with only PR details if options are empty and no files in meta for files list", async () => {
     const pull = mockPull({
       repo: "owner/myrepo",
       number: 123,
@@ -168,7 +172,7 @@ describe("buildRepoPromptText", () => {
       body: "PR Body here.",
       url: "https://github.com/owner/myrepo/pull/123",
       branch: "feature-branch",
-      files: ["src/main.ts", "README.md"],
+      files: ["src/main.ts", "README.md"], // pull.files is not used for "files changed" list, meta.files is
       author: {
         id: "u1",
         name: "testauthor",
@@ -177,40 +181,164 @@ describe("buildRepoPromptText", () => {
       },
       createdAt: "2024-01-01T00:00:00Z",
     });
+    const metaNoFiles = { ...mockResolvedMetaBase, files: [] };
 
     const { promptText, blocks } = await buildRepoPromptText(
       pull,
       {}, // No diffs, no comments requested
-      // Using legacy signature for this test, mode will be defaultPromptMode ('implement')
       undefined, // endpoint
-      mockResolvedMeta,
+      metaNoFiles,
     );
 
-    expect(getPromptTemplateSpy).toHaveBeenCalledWith(defaultPromptMode); // Verify it was called with default mode
+    expect(getPromptTemplateSpy).toHaveBeenCalledWith(defaultPromptMode);
 
     expect(blocks.length).toBe(1); // Only PR details block
     expect(blocks[0].kind).toBe("comment");
     expect(blocks[0].id).toBe(`pr-details-${pull.id}`);
-    expect((blocks[0] as CommentBlockInput).header).toContain(
+    const prDetailsCommentBlock = blocks[0] as CommentBlockInput;
+    expect(prDetailsCommentBlock.header).toContain(
       "### PR #123 DETAILS: My Test PR",
     );
-    expect((blocks[0] as CommentBlockInput).commentBody).toBe("PR Body here.");
+    expect(prDetailsCommentBlock.commentBody).toBe("PR Body here."); // No "files changed" list
+    expect(prDetailsCommentBlock.commentBody).not.toContain("### files changed");
+
 
     expect(promptText).toContain("## SETUP");
     expect(promptText).toContain("cd /tmp/myrepo");
     expect(promptText).toContain("git checkout feature-branch");
     expect(promptText).toContain(
       `MOCK_PROMPT_FOR_${defaultPromptMode.toUpperCase()}`,
-    ); // Check for mocked template
-    expect(promptText).toContain("### PR #123 DETAILS: My Test PR"); // From PR details block
-    expect(promptText).toContain("> _testauthor · 2024-Jan-01_"); // Formatted author/date
+    );
+    expect(promptText).toContain("### PR #123 DETAILS: My Test PR");
+    expect(promptText).toContain("> _testauthor · 2024-Jan-01_");
     expect(promptText).toContain("PR Body here.");
+    expect(promptText).not.toContain("### files changed");
     expect(promptText).toContain("🔗 https://github.com/owner/myrepo/pull/123");
     expect(promptText).not.toContain("### FULL PR DIFF");
     expect(promptText).not.toContain("### LAST COMMIT");
     expect(vi.mocked(gh.fetchPullComments)).not.toHaveBeenCalled();
-    expect(logRepoPromptCallSpy).not.toHaveBeenCalled(); // UPDATED: Use spy
+    expect(logRepoPromptCallSpy).not.toHaveBeenCalled();
   });
+
+  it("guard-rail: should ignore includeLastCommit if includePr is also true", async () => {
+    const pull = mockPull({ number: 1, repo: "o/r", branch: "b", files: [] });
+    const mockLastCommit = { sha: "lastsha1", commit: { message: "Last commit" } } as PullRequestCommit;
+    listPrCommitsSpy.mockResolvedValue([mockLastCommit]);
+
+    await buildRepoPromptText(
+      pull,
+      { includePr: true, includeLastCommit: true },
+      defaultPromptMode,
+      undefined,
+      mockResolvedMetaBase,
+    );
+
+    expect(getPullRequestDiffSpy).toHaveBeenCalled();
+    // listPrCommits might be called if the logic for last commit diff is reached,
+    // but the diff itself should not be added.
+    // A stronger check is that the block for last commit is not created or added.
+    // The guard rail `diffOptions.includeLastCommit = false;` should prevent fetching/processing last commit diff.
+    // So, listPrCommits for the purpose of diffing the last commit should not be called if the guard works early.
+    // The current code calls listPrCommits *inside* the `if (diffOptions.includeLastCommit)` block.
+    // So, if the guard sets `diffOptions.includeLastCommit = false`, then `listPrCommits` for this purpose won't be called.
+    const callsToListPrCommitsForLastCommit = listPrCommitsSpy.mock.calls.filter(
+        (call: any) => call[3] === 1 // The `perPage` argument for fetching last commit is 1
+    );
+    expect(callsToListPrCommitsForLastCommit.length).toBe(0);
+  });
+
+  it("conditional files list: should include 'files changed' in PR details if includePr is false and files exist", async () => {
+    const pull = mockPull({ number: 1, repo: "o/r", branch: "b", files: [], body: "Original body." });
+    const metaWithFiles = { ...mockResolvedMetaBase, files: ["fileA.ts", "fileB.md"] };
+    
+    const { blocks } = await buildRepoPromptText(
+      pull,
+      { includePr: false }, // includePr is false
+      defaultPromptMode,
+      undefined,
+      metaWithFiles,
+    );
+
+    const prDetailsBlock = blocks.find(b => b.id.startsWith("pr-details")) as CommentBlockInput;
+    expect(prDetailsBlock).toBeDefined();
+    expect(prDetailsBlock.commentBody).toContain("Original body.");
+    expect(prDetailsBlock.commentBody).toContain("### files changed (2)");
+    expect(prDetailsBlock.commentBody).toContain("- fileA.ts");
+    expect(prDetailsBlock.commentBody).toContain("- fileB.md");
+  });
+
+  it("conditional files list: should NOT include 'files changed' in PR details if includePr is true, even if files exist", async () => {
+    const pull = mockPull({ number: 1, repo: "o/r", branch: "b", files: [], body: "Original body." });
+    const metaWithFiles = { ...mockResolvedMetaBase, files: ["fileA.ts", "fileB.md"] };
+
+    const { blocks } = await buildRepoPromptText(
+      pull,
+      { includePr: true }, // includePr is true
+      defaultPromptMode,
+      undefined,
+      metaWithFiles,
+    );
+
+    const prDetailsBlock = blocks.find(b => b.id.startsWith("pr-details")) as CommentBlockInput;
+    expect(prDetailsBlock).toBeDefined();
+    expect(prDetailsBlock.commentBody).toBe("Original body."); // Only original body
+    expect(prDetailsBlock.commentBody).not.toContain("### files changed");
+  });
+  
+  it("conditional files list: should NOT include 'files changed' if meta.files is empty, even if includePr is false", async () => {
+    const pull = mockPull({ number: 1, repo: "o/r", branch: "b", files: [], body: "Original body." });
+    const metaNoFiles = { ...mockResolvedMetaBase, files: [] };
+
+    const { blocks } = await buildRepoPromptText(
+      pull,
+      { includePr: false }, // includePr is false
+      defaultPromptMode,
+      undefined,
+      metaNoFiles, // No files in meta
+    );
+
+    const prDetailsBlock = blocks.find(b => b.id.startsWith("pr-details")) as CommentBlockInput;
+    expect(prDetailsBlock).toBeDefined();
+    expect(prDetailsBlock.commentBody).toBe("Original body.");
+    expect(prDetailsBlock.commentBody).not.toContain("### files changed");
+  });
+
+  it("does not duplicate the files list if PR body already contains it", async () => {
+    const pull = mockPull({
+      repo: "o/r",
+      number: 7,
+      branch: "b",
+      // simulate a previous run that already injected the section
+      body: `
+        Some intro.
+
+        ### files changed (2)
+        - foo.ts
+        - bar.md
+      `,
+      files: [],   // pull.files is irrelevant here
+    });
+
+    const meta = { ...mockResolvedMetaBase, files: ["foo.ts", "bar.md"] };
+
+    const { blocks } = await buildRepoPromptText(
+      pull,
+      { includePr: false },
+      defaultPromptMode,
+      undefined,
+      meta,
+    );
+
+    const body = (blocks.find(b => b.id.startsWith("pr-details")) as CommentBlockInput).commentBody;
+
+    // should appear exactly once
+    expect(body.match(/### files changed/g)?.length).toBe(1);
+    // Also check that the content of the list is from the *original* body, not re-appended
+    expect(body).toContain("Some intro.");
+    expect(body).toContain("- foo.ts");
+    expect(body).toContain("- bar.md");
+  });
+
 
   it("should include comments if specified, potentially as threads", async () => {
     const pull = mockPull({

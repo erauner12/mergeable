@@ -44,8 +44,8 @@ export async function getBasePrompt(): Promise<string> {
   // However, the new system expects getPromptTemplate to return the full template.
   // For now, let's have it return the content of templateMap.implement if no legacy DB entry.
   const row = await db.settings.get("basePromptTemplate");
-  if (row?.value !== undefined) return row.value as string;
-  
+  if (row?.value !== undefined) return row.value;
+
   // Extracting the "TASK" part from templateMap.implement is complex here.
   // The refactor implies this function might become less relevant or change its meaning.
   // For now, returning the full implement template from map if legacy not found.
@@ -71,14 +71,14 @@ export async function setBasePrompt(text: string): Promise<void> {
 export async function getPromptTemplate(mode: PromptMode): Promise<string> {
   // 1. Try the new key first
   const newKeyRow = await db.settings.get(keyFor(mode));
-  if (newKeyRow?.value !== undefined) return newKeyRow.value as string;
+  if (newKeyRow?.value !== undefined) return newKeyRow.value;
 
   // 2. For "implement" mode, try the legacy key if new key not found
   if (mode === "implement") {
     const legacyKeyRow = await db.settings.get("basePromptTemplate");
-    if (legacyKeyRow?.value !== undefined) return legacyKeyRow.value as string;
+    if (legacyKeyRow?.value !== undefined) return legacyKeyRow.value;
   }
-  
+
   // 3. Fallback to the default template from the loaded .md file
   return templateMap[mode];
 }

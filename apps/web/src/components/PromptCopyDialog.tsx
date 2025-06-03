@@ -300,7 +300,7 @@ export function PromptCopyDialog({
         );
         return formatted;
       })
-      .join("\n");
+      .join("\n\n"); // <-- MODIFIED: Use double newline for separation
     console.log(
       "DEBUG currentSelectedText: final result =",
       JSON.stringify(result),

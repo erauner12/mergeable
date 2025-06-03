@@ -141,7 +141,12 @@ describe("buildRepoPromptText", () => {
     vi.spyOn(gh, "getCommitDiff").mockResolvedValue(
       "dummy commit diff content",
     );
-    vi.spyOn(settings, "getBasePrompt").mockResolvedValue("TEST_BASE_PROMPT");
+    // Old: repoPrompt pulled base prompt through getBasePrompt()
+    // jest.spyOn(settings, "getBasePrompt")
+    //     .mockResolvedValue("TEST_BASE_PROMPT");
+    // New: it uses getPromptTemplate(mode)
+    vi.spyOn(settings, "getPromptTemplate")
+        .mockResolvedValue("TEST_BASE_PROMPT");
     // getDefaultRoot is not called by buildRepoPromptText if meta (with rootPath) is passed
     // ADDED: Initialize spy
     logRepoPromptCallSpy = vi

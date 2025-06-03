@@ -224,21 +224,68 @@ export async function buildRepoPromptUrl(
   };
 }
 
-/**
- * Builds the prompt text and structured prompt blocks for a pull request.
- * @param pull The pull request object.
- * @param diffOptions Options for including different types of diffs and comments.
- * @param endpoint Optional endpoint configuration for authenticated requests.
- * @param meta Resolved metadata (owner, repo, branch, rootPath) from buildRepoPromptUrl.
- * @returns An object containing the full prompt text (of initially selected blocks) and an array of all generated prompt blocks.
- */
+// --------------------------------------------------------------------------------
+// NEW OVERLOADS (place *above* the implementation)
+// --------------------------------------------------------------------------------
 export async function buildRepoPromptText(
   pull: PullWithBranch,
-  diffOptions: DiffOptions = {},
-  mode: PromptMode, // Added mode parameter
-  endpoint: Endpoint | undefined,
-  meta: ResolvedPullMeta,
+  diffOptions?: DiffOptions,
+  endpoint?: Endpoint,
+  meta?: ResolvedPullMeta,
+): Promise<{ promptText: string; blocks: PromptBlock[] }>;
+
+export async function buildRepoPromptText(
+  pull: PullWithBranch,
+  diffOptions: DiffOptions | undefined,
+  mode: PromptMode,
+  endpoint?: Endpoint,
+  meta?: ResolvedPullMeta,
+): Promise<{ promptText: string; blocks: PromptBlock[] }>;
+
+// --------------------------------------------------------------------------------
+// SINGLE IMPLEMENTATION
+// --------------------------------------------------------------------------------
+export async function buildRepoPromptText(
+  pull: PullWithBranch,
+  diffOptionsArg?: DiffOptions, // Renamed to avoid conflict in argument juggling
+  // `modeOrEndpoint` can be either `PromptMode` or the old 3rd-argument `Endpoint`
+  modeOrEndpoint?: PromptMode | Endpoint,
+  endpointOrMeta?: Endpoint | ResolvedPullMeta,
+  maybeMeta?: ResolvedPullMeta,
 ): Promise<{ promptText: string; blocks: PromptBlock[] }> {
+  // --- argument juggling -------------------------------------------------------
+  let mode: PromptMode = defaultPromptMode;
+  let endpoint: Endpoint | undefined;
+  let meta: ResolvedPullMeta | undefined;
+  const diffOptions: DiffOptions = diffOptionsArg || {};
+  if (
+    typeof modeOrEndpoint === "string" &&
+    (modeOrEndpoint === "implement" ||
+      modeOrEndpoint === "review" ||
+      modeOrEndpoint === "adjust-pr" ||
+      modeOrEndpoint === "respond")
+  ) {
+    // New signature in use: buildRepoPromptText(pull, diffOptions, mode, endpoint, meta)
+    mode = modeOrEndpoint as PromptMode;
+    endpoint = endpointOrMeta as Endpoint | undefined;
+    meta = maybeMeta;
+  } else {
+    // Legacy 4-arg signature: buildRepoPromptText(pull, diffOptions, endpoint, meta)
+    // mode remains defaultPromptMode
+    endpoint = modeOrEndpoint;
+    meta = endpointOrMeta as ResolvedPullMeta | undefined;
+  }
+
+  if (!meta) {
+    // This case should ideally be handled by callers ensuring meta is provided,
+    // or by resolving it here if necessary, though the current structure implies meta is pre-resolved.
+    // For now, to prevent runtime errors if meta is undefined from legacy calls, we throw.
+    // A more robust solution might involve calling buildRepoPromptUrl internally if meta is missing.
+    throw new Error(
+      "ResolvedPullMeta (meta) is required for buildRepoPromptText. Legacy callers might need updating or meta resolution logic here.",
+    );
+  }
+
   const { owner, repo, branch, rootPath } = meta;
   const token = endpoint?.auth;
 
@@ -403,21 +450,10 @@ export async function buildRepoPromptText(
     initiallySelectedBlocks,
   );
 
-  let basePrompt: string;
-  try {
-    const basePromptResult = getPromptTemplate(mode);
-    if (basePromptResult instanceof Error) {
-      throw basePromptResult;
-    }
-    if (typeof basePromptResult !== "string") {
-      throw new Error("Failed to get prompt template");
-    }
-    basePrompt = basePromptResult;
-  } catch (error: unknown) {
-    throw new Error(
-      `Failed to get prompt template: ${error instanceof Error ? error.message : String(error)}`,
-    );
-  }
+  // Ensure getPromptTemplate is awaited
+  const basePrompt = await getPromptTemplate(mode);
+  // Removed the try-catch block that was handling Promise<string>
+
   const promptPayloadParts: string[] = [
     "## SETUP",
     "```bash",

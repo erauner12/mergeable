@@ -345,10 +345,12 @@ describe("PromptCopyDialog with FileDiffPicker integration", () => {
   });
 
   test("Content of diff block in Collapse updates based on picker selection", async () => {
+    const realBuildClipboardPayload = DiffUtils.buildClipboardPayload;
     const buildClipboardPayloadSpy = vi
       .spyOn(DiffUtils, "buildClipboardPayload")
       // .mockReturnValueOnce("PAYLOAD_FOR_ALL_FILES_RENDER") // No longer called for initial display
-      .mockReturnValue("PAYLOAD_FOR_ONE_FILE_RENDER"); // Called after picker interaction
+      // .mockReturnValue("PAYLOAD_FOR_ONE_FILE_RENDER"); // Called after picker interaction
+      .mockImplementation(realBuildClipboardPayload); // Use real implementation or a more specific mock if needed for this stage
 
     render(
       <PromptCopyDialog
@@ -388,11 +390,10 @@ describe("PromptCopyDialog with FileDiffPicker integration", () => {
       // buildClipboardPayloadSpy was mocked to return "PAYLOAD_FOR_ONE_FILE_RENDER"
       // This should now be actual raw diff content.
       // Let's get the expected raw diff for file1.txt
-      const allPatchesData =
-        DiffUtils.splitUnifiedDiff(SIMPLE_DIFF_PATCH);
+      const allPatchesData = DiffUtils.splitUnifiedDiff(SIMPLE_DIFF_PATCH);
       const expectedRawDiffForFile1 = allPatchesData["file1.txt"].patch.trim();
       // Update the spy's return value for this specific scenario
-      buildClipboardPayloadSpy.mockReturnValue(expectedRawDiffForFile1);
+      // buildClipboardPayloadSpy.mockReturnValue(expectedRawDiffForFile1); // This was too late
 
       // Rerender or trigger update if necessary for spy to take effect for display
       // (Often not needed if spy is set before the action that causes re-render and call)
@@ -404,7 +405,10 @@ describe("PromptCopyDialog with FileDiffPicker integration", () => {
       // The spy is set up at the top of the test.
       // It's called when rendering the diff block content *after* hasPickedFiles is true.
       // So, its return value should be what we expect to see.
-      expect(preElement).toHaveTextContent(expectedRawDiffForFile1);
+      // expect(preElement).toHaveTextContent(expectedRawDiffForFile1); // Original assertion
+      expect(normaliseWS(preElement!.textContent!)).toBe(
+        normaliseWS(expectedRawDiffForFile1),
+      );
     });
 
     // buildClipboardPayloadSpy is now called once for the display after picker interaction.
@@ -466,7 +470,10 @@ describe("PromptCopyDialog with FileDiffPicker integration", () => {
         .closest('div[class*="promptBlock"]');
       const preElement = diffBlockDiv!.querySelector("pre");
       // expect(preElement).toHaveTextContent("PICKED_FILES_PAYLOAD"); // Old assertion
-      expect(preElement).toHaveTextContent(expectedRawDiffForFile1);
+      // expect(preElement).toHaveTextContent(expectedRawDiffForFile1); // Previous assertion
+      expect(normaliseWS(preElement!.textContent!)).toBe(
+        normaliseWS(expectedRawDiffForFile1),
+      );
     });
     buildClipboardPayloadSpy.mockRestore();
     await act(async () => {

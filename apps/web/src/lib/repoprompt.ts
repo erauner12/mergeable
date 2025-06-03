@@ -456,13 +456,6 @@ export async function buildRepoPromptText(
 
   const prDetailsString = formatPromptBlock(prDetailsBlock);
 
-  // Generate FILES_LIST slot content (separate from PR details)
-  let filesListString = "";
-  if (!diffOptions.includePr && meta.files && meta.files.length > 0) {
-    const filesListContent = meta.files.map((f) => `- ${f}`).join("\n");
-    filesListString = `### files changed (${meta.files.length})\n${filesListContent}`;
-  }
-
   const otherSelectedBlocks = initiallySelectedBlocks.filter(
     (block) => block.id !== prDetailsBlock.id,
   );
@@ -470,6 +463,24 @@ export async function buildRepoPromptText(
 
   const linkString = `🔗 ${pull.url.includes("/pull/") ? pull.url : `https://github.com/${owner}/${repo}/pull/${pull.number}`}`;
   const mainTemplateString = await getPromptTemplate(mode);
+
+  // Smart FILES_LIST generation to prevent duplication with DIFF_CONTENT
+  let filesListString = "";
+  if (!diffOptions.includePr && meta.files && meta.files.length > 0) {
+    // Check if template has both FILES_LIST and DIFF_CONTENT tokens
+    const hasFilesListToken = mainTemplateString.includes("{{FILES_LIST}}");
+    const hasDiffContentToken = mainTemplateString.includes("{{DIFF_CONTENT}}");
+    const willHaveDiffContent = diffContentString.trim().length > 0;
+    
+    // Only populate FILES_LIST if:
+    // 1. Template doesn't have DIFF_CONTENT token, OR
+    // 2. Template has DIFF_CONTENT token but no actual diff content will be present
+    // This prevents duplication when both slots would show file information
+    if (hasFilesListToken && (!hasDiffContentToken || !willHaveDiffContent)) {
+      const filesListContent = meta.files.map((f) => `- ${f}`).join("\n");
+      filesListString = `### files changed (${meta.files.length})\n${filesListContent}`;
+    }
+  }
 
   // Check if template contains the prDetailsBlock token
   // const hasTokenInTemplate = mainTemplateString.includes("{{prDetailsBlock}}"); // This specific variable is no longer used directly in the old way.

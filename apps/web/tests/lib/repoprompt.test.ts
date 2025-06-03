@@ -1,8 +1,4 @@
 /// <reference types="vitest/globals" />
-// ADD: Import the shared mock helper. Should be one of the first imports.
-import "../__mocks__/templates.mock";
-// ADD: Import utilities from the shared mock.
-import { setMockTemplateBody } from "../__mocks__/templates.mock";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PullRequestCommit } from "../../src/lib/github/client"; // Import renamed type
@@ -18,10 +14,36 @@ import {
   type ResolvedPullMeta,
 } from "../../src/lib/repoprompt";
 import { isDiffBlock } from "../../src/lib/repoprompt.guards";
-import * as settings from "../../src/lib/settings"; // Keep for getDefaultRoot
-// REMOVE: import type { TemplateMeta } from "../../src/lib/templates"; // No longer needed directly here, or covered by mock
-// Import * as templates will now correctly point to the mocked module
+import * as settings from "../../src/lib/settings";
 import { mockPull } from "../testing";
+
+// Import actuals for mocking
+import * as actualTemplates from "../../src/lib/templates";
+
+// Create the state for the mock
+// Ensure this is a deep copy to avoid modifying the actual module's state if it's cached
+const mockableTemplateMap = JSON.parse(JSON.stringify(actualTemplates.templateMap));
+
+// Mock the templates module
+vi.mock("../../src/lib/templates", () => ({
+  __esModule: true, // Recommended for Vitest mocks
+  templateMap: mockableTemplateMap,
+  analyseTemplate: actualTemplates.analyseTemplate, // Use actual analyseTemplate
+}));
+
+// Define setMockTemplateBody locally
+function setMockTemplateBody(mode: PromptMode, body: string) {
+  if (mockableTemplateMap[mode]) {
+    mockableTemplateMap[mode].body = body;
+    mockableTemplateMap[mode].meta = actualTemplates.analyseTemplate(body);
+  } else {
+    // This case might be hit if a new mode is tested without being in the initial actualTemplates.templateMap
+    mockableTemplateMap[mode] = {
+      body,
+      meta: actualTemplates.analyseTemplate(body),
+    };
+  }
+}
 
 // Mock renderTemplate to check its inputs and control its output
 vi.mock("../../src/lib/renderTemplate", () => ({
@@ -148,8 +170,19 @@ describe("buildRepoPromptText", () => {
   let getPullRequestDiffSpy: any;
 
   beforeEach(async () => {
-    // Make beforeEach async if needed for imports
     vi.clearAllMocks();
+
+    // Reset mockableTemplateMap to its original state from actuals
+    const originalActualMap = JSON.parse(JSON.stringify(actualTemplates.templateMap));
+    // Clear current mockableTemplateMap
+    for (const key in mockableTemplateMap) {
+        delete mockableTemplateMap[key];
+    }
+    // Repopulate with fresh copy
+    for (const key in originalActualMap) {
+        mockableTemplateMap[key] = originalActualMap[key];
+    }
+
     getPullRequestDiffSpy = vi
       .spyOn(gh, "getPullRequestDiff")
       .mockResolvedValue("dummy pr diff content");
@@ -159,7 +192,7 @@ describe("buildRepoPromptText", () => {
       "dummy commit diff content",
     );
 
-    // Setup default templates for this suite using the shared mock helper
+    // Setup default templates for this suite using the local setMockTemplateBody
     const defaultTemplateBodyForMode = (mode: PromptMode) =>
       `MODE ${mode.toUpperCase()} TEMPLATE:\nSETUP:\n{{SETUP}}\nPR_DETAILS:\n{{PR_DETAILS}}\nFILES_LIST:\n{{FILES_LIST}}\nDIFF_CONTENT:\n{{DIFF_CONTENT}}\nLINK:\n{{LINK}}`;
     

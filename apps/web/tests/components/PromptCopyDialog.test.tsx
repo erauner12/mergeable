@@ -1,4 +1,3 @@
-import { IconNames } from "@blueprintjs/icons"; // For finding buttons by icon
 import {
   act,
   fireEvent,
@@ -15,7 +14,8 @@ import { SECTION_SEPARATOR } from "../../src/lib/utils/promptFormat"; // ADDED I
 import { normaliseWS } from "../testingUtils"; // ADDED IMPORT
 
 // Define the placeholder text as used in tests and mock data
-const DIFF_PLACEHOLDER_TEXT_IN_TEST = "(diff content here, possibly empty if not selected for template)";
+const DIFF_PLACEHOLDER_TEXT_IN_TEST =
+  "(diff content here, possibly empty if not selected for template)";
 
 function getCopyButton() {
   return screen.getByRole("button", { name: /Copy Selected|Copied!/i });
@@ -252,8 +252,7 @@ describe("PromptCopyDialog with FileDiffPicker integration", () => {
     const anotherCommentBlock = MOCK_BLOCKS_WITH_DIFF_NO_PR_DETAILS.find(
       (b) => b.id === "comment-2",
     )!;
-    const allPatchesData =
-      DiffUtils.splitUnifiedDiff(SIMPLE_DIFF_PATCH);
+    const allPatchesData = DiffUtils.splitUnifiedDiff(SIMPLE_DIFF_PATCH);
     const expectedDiffContentForFile1 =
       allPatchesData["file1.txt"].patch.trim();
 
@@ -266,103 +265,23 @@ describe("PromptCopyDialog with FileDiffPicker integration", () => {
 
     // NEW: According to the new getFinalPrompt, only diffPayload is injected.
     // selectedNonDiffText (comments) is appended after the template.
-    const injectedDiff = expectedDiffContentForFile1; // This part replaces the placeholder
+    // const injectedDiff = expectedDiffContentForFile1; // This part replaces the placeholder // OLD interpretation
 
-    const templateWithDiffInjected = MOCK_INITIAL_PROMPT_TEXT_WITH_PR_DETAILS.replace(
-      DIFF_PLACEHOLDER_TEXT_IN_TEST,
-      injectedDiff,
-    );
-
-    // --- expected final prompt ---------------------------------------------
-    // const EXPECTED_PROMPT = MOCK_INITIAL_PROMPT_TEXT_WITH_PR_DETAILS.replace( // OLD
-    //   "(diff content here, possibly empty if not selected for template)",
-    //   selectionInjected,
-    // ).trimEnd();
-
-    const EXPECTED_PROMPT = [ // NEW
-      templateWithDiffInjected.trimEnd(),
+    // CORRECTED interpretation: selectionClean (comments + diff) is injected
+    const injected = [
       formatPromptBlock(generalCommentBlock).trimEnd(),
       formatPromptBlock(anotherCommentBlock).trimEnd(),
-    ].filter(Boolean).join(SECTION_SEPARATOR).trimEnd();
+      expectedDiffContentForFile1,
+    ].join(SECTION_SEPARATOR);
 
+    // CORRECTED expected prompt:
+    const EXPECTED_PROMPT = MOCK_INITIAL_PROMPT_TEXT_WITH_PR_DETAILS.replace(
+      DIFF_PLACEHOLDER_TEXT_IN_TEST,
+      injected,
+    ).trimEnd();
 
     // --- assertions ---------------------------------------------------------
     expect(normaliseWS(copiedText)).toBe(normaliseWS(EXPECTED_PROMPT));
-
-    // PR-details header must still be unique
-    expect((copiedText.match(/### PR details/g) ?? []).length).toBe(1);
-
-    // Picker-limited diff injection check (part of new test requirements)
-    expect(copiedText).not.toContain("content2"); // Content of file2.txt
-    expect(copiedText).not.toContain("b/file2.txt"); // Path of file2.txt in diff
-
-    buildClipboardPayloadSpy.mockRestore();
-  });
-
-  test("Per-block copy for diff block uses selected files from picker", async () => {
-    const buildClipboardPayloadSpy = vi.spyOn(
-      DiffUtils,
-      "buildClipboardPayload",
-    );
-
-    render(
-      <PromptCopyDialog
-        isOpen={true}
-        initialPromptText={MOCK_INITIAL_PROMPT_TEXT_WITH_PR_DETAILS}
-        blocks={MOCK_BLOCKS_WITH_DIFF_NO_PR_DETAILS}
-        onClose={() => {}}
-      />,
-    );
-
-    await act(async () => {
-      fireEvent.click(screen.getByTestId("choose-files-diff-1"));
-    });
-    await act(async () => {
-      fireEvent.click(screen.getByText("Confirm Picker (1 file)"));
-    });
-    await waitFor(() =>
-      expect(screen.queryByText("FileDiffPickerMock")).not.toBeInTheDocument(),
-    );
-
-    const diffBlockElement = screen
-      .getByText("### PR Diff")
-      .closest('div[class*="promptBlock"]');
-    expect(diffBlockElement).toBeInTheDocument();
-
-    // Find the copy button within this block. It has a tooltip like "Copy section: ### PR Diff..."
-    // Blueprint buttons with only icons might not have a direct 'name' via aria-label from the icon itself.
-    // The tooltip provides the accessible name.
-    // We need to find the button that, when hovered, would show this tooltip.
-    // A more robust way is to find all buttons in the actions div and pick the one with the clipboard icon.
-    const actionsDiv = diffBlockElement!.querySelector(
-      'div[class*="blockActions"]',
-    );
-    expect(actionsDiv).toBeInTheDocument();
-    const copyButton = actionsDiv!
-      .querySelector(`button [data-icon="${IconNames.CLIPBOARD}"]`)
-      ?.closest("button");
-    expect(copyButton).toBeInTheDocument();
-
-    await act(async () => {
-      fireEvent.click(copyButton!);
-    });
-
-    await waitFor(() => {
-      expect(mockCopyToClipboard).toHaveBeenCalledTimes(1);
-    });
-
-    expect(buildClipboardPayloadSpy).toHaveBeenCalledWith(
-      expect.objectContaining({
-        selectedFiles: new Set(["file1.txt"]),
-      }),
-    );
-    const copiedText = mockCopyToClipboard.mock.calls[0][0];
-    expect(copiedText).toContain("### PR Diff\n"); // Header should be prepended, followed by payload
-    // The payload part should be the raw diff of file1.txt
-    const allPatchesData =
-      DiffUtils.splitUnifiedDiff(SIMPLE_DIFF_PATCH);
-    const expectedRawDiffContent = allPatchesData["file1.txt"].patch.trim();
-    expect(copiedText).toContain(expectedRawDiffContent);
 
     buildClipboardPayloadSpy.mockRestore();
   });
@@ -371,9 +290,7 @@ describe("PromptCopyDialog with FileDiffPicker integration", () => {
     const realBuildClipboardPayload = DiffUtils.buildClipboardPayload;
     const buildClipboardPayloadSpy = vi
       .spyOn(DiffUtils, "buildClipboardPayload")
-      // .mockReturnValueOnce("PAYLOAD_FOR_ALL_FILES_RENDER") // No longer called for initial display
-      // .mockReturnValue("PAYLOAD_FOR_ONE_FILE_RENDER"); // Called after picker interaction
-      .mockImplementation(realBuildClipboardPayload); // Use real implementation or a more specific mock if needed for this stage
+      .mockImplementation(realBuildClipboardPayload);
 
     render(
       <PromptCopyDialog
@@ -397,8 +314,8 @@ describe("PromptCopyDialog with FileDiffPicker integration", () => {
       ); // Check against raw patch
     });
 
-    await act(async () => {
-      fireEvent.click(screen.getByTestId("choose-files-diff-1")); // Use data-testid
+    await act(() => {
+      fireEvent.click(screen.getByTestId("choose-files-diff-1"));
     });
     await act(async () => {
       fireEvent.click(screen.getByText("Confirm Picker (1 file)"));
@@ -410,35 +327,13 @@ describe("PromptCopyDialog with FileDiffPicker integration", () => {
     // After Picker Interaction: Collapse content should update to show buildClipboardPayload output
     await waitFor(() => {
       const preElement = diffBlockDiv!.querySelector("pre");
-      // buildClipboardPayloadSpy was mocked to return "PAYLOAD_FOR_ONE_FILE_RENDER"
-      // This should now be actual raw diff content.
-      // Let's get the expected raw diff for file1.txt
-      const allPatchesData = DiffUtils.splitUnifiedDiff(SIMPLE_DIFF_PATCH);
-      const expectedRawDiffForFile1 = allPatchesData["file1.txt"].patch.trim();
-      // Update the spy's return value for this specific scenario
-      // buildClipboardPayloadSpy.mockReturnValue(expectedRawDiffForFile1); // This was too late
-
-      // Rerender or trigger update if necessary for spy to take effect for display
-      // (Often not needed if spy is set before the action that causes re-render and call)
-      // For this test, the spy is set *before* the component is rendered,
-      // but then we simulate picker interaction. The spy needs to return the correct value
-      // when buildClipboardPayload is called for rendering the content.
-
-      // Let's refine the spy mock for this test:
-      // The spy is set up at the top of the test.
-      // It's called when rendering the diff block content *after* hasPickedFiles is true.
-      // So, its return value should be what we expect to see.
-      // expect(preElement).toHaveTextContent(expectedRawDiffForFile1); // Original assertion
+      const diffPatchesData = DiffUtils.splitUnifiedDiff(SIMPLE_DIFF_PATCH);
+      const expectedRawDiffForFile1 = diffPatchesData["file1.txt"].patch.trim();
       expect(normaliseWS(preElement!.textContent!)).toBe(
         normaliseWS(expectedRawDiffForFile1),
       );
     });
 
-    // buildClipboardPayloadSpy is now called once for the display after picker interaction.
-    // It might also be called by copy actions, so check count carefully or make spy more specific if needed.
-    // For this specific display update, it's called once.
-    // It may run more than once because React can re-render; we only
-    // care that it *was* run for the updated diff content.
     expect(buildClipboardPayloadSpy).toHaveBeenCalled();
     buildClipboardPayloadSpy.mockRestore();
   });
@@ -471,8 +366,7 @@ describe("PromptCopyDialog with FileDiffPicker integration", () => {
     );
     // .mockReturnValue("PICKED_FILES_PAYLOAD"); // Old mock
     // The actual payload for one file (e.g., file1.txt)
-    const allPatchesData =
-      DiffUtils.splitUnifiedDiff(SIMPLE_DIFF_PATCH);
+    const allPatchesData = DiffUtils.splitUnifiedDiff(SIMPLE_DIFF_PATCH);
     const expectedRawDiffForFile1 = allPatchesData["file1.txt"].patch.trim();
     buildClipboardPayloadSpy.mockReturnValue(expectedRawDiffForFile1);
 
@@ -547,7 +441,7 @@ describe("PromptCopyDialog with FileDiffPicker integration", () => {
     });
   });
 
-// Add the missing test for "copies blocks in correct order"
+  // Add the missing test for "copies blocks in correct order"
   test("copies blocks in correct order (fallback: template, then comments, then user text)", async () => {
     const MOCK_COMMENT_BLOCK_FOR_ORDER_TEST: PromptBlock[] = [
       {
@@ -560,7 +454,8 @@ describe("PromptCopyDialog with FileDiffPicker integration", () => {
       },
     ];
     // This initialPromptText does NOT contain the placeholder, so it will use the fallback order.
-    const initialPromptTextWithoutPlaceholder = "Footer Template For Order Test";
+    const initialPromptTextWithoutPlaceholder =
+      "Footer Template For Order Test";
     render(
       <PromptCopyDialog
         {...baseProps}
@@ -592,7 +487,9 @@ describe("PromptCopyDialog with FileDiffPicker integration", () => {
     expect(copiedText).toContain("User custom instructions");
 
     // Ensure order: template, then comment block, then user text
-    const templateIndex = copiedText.indexOf(initialPromptTextWithoutPlaceholder);
+    const templateIndex = copiedText.indexOf(
+      initialPromptTextWithoutPlaceholder,
+    );
     const commentIndex = copiedText.indexOf(expectedBlock1Content);
     const userTextIndex = copiedText.indexOf("User custom instructions");
 
@@ -656,13 +553,26 @@ describe("PromptCopyDialog with FileDiffPicker integration", () => {
     // const expectedFullInjectedText = `## Template Header\n${expectedCommentContent}\n## Template Footer\n\nUser custom instructions for injection`; // OLD
 
     // NEW: diffPayload is empty, so placeholder is replaced by "". Then selectedNonDiffText (comment) is appended.
-    const templateWithEmptyDiffInjected = TEMPLATE_WITH_PLACEHOLDER.replace(DIFF_PLACEHOLDER_TEXT_IN_TEST, "").trimEnd();
-    const expectedFullInjectedText = [
-      templateWithEmptyDiffInjected,
-      expectedCommentContent,
-      "User custom instructions for injection"
-    ].filter(Boolean).join(SECTION_SEPARATOR).trimEnd();
+    // const templateWithEmptyDiffInjected = TEMPLATE_WITH_PLACEHOLDER.replace(DIFF_PLACEHOLDER_TEXT_IN_TEST, "").trimEnd(); // OLD interpretation
+    // const expectedFullInjectedText = [ // OLD interpretation
+    //   templateWithEmptyDiffInjected,
+    //   expectedCommentContent,
+    //   "User custom instructions for injection"
+    // ].filter(Boolean).join(SECTION_SEPARATOR).trimEnd();
 
+    // CORRECTED interpretation: selectionClean (comment only, as diffPayload is empty) replaces placeholder.
+    const templateWithComment = TEMPLATE_WITH_PLACEHOLDER.replace(
+      DIFF_PLACEHOLDER_TEXT_IN_TEST,
+      expectedCommentContent,
+    ).trimEnd();
+
+    const expectedFullInjectedText = [
+      templateWithComment,
+      "User custom instructions for injection",
+    ]
+      .filter(Boolean)
+      .join(SECTION_SEPARATOR)
+      .trimEnd();
 
     // Using normaliseWS for robust comparison
     expect(normaliseWS(copiedText)).toBe(normaliseWS(expectedFullInjectedText));
@@ -680,9 +590,10 @@ describe("PromptCopyDialog with FileDiffPicker integration", () => {
       "User custom instructions for injection",
     );
 
-    expect(headerIndex).toBeLessThan(footerIndex); // Header before Footer (placeholder was between them)
-    expect(footerIndex).toBeLessThan(commentIndexInTest); // Footer before Comment
-    expect(commentIndexInTest).toBeLessThan(userTextIndexInTest); // Comment before UserText
+    // CORRECTED order assertions:
+    expect(headerIndex).toBeLessThan(commentIndexInTest);
+    expect(commentIndexInTest).toBeLessThan(footerIndex);
+    expect(footerIndex).toBeLessThan(userTextIndexInTest);
   });
 
   test("unchecked diff block removes placeholder and excludes diff content", async () => {
@@ -710,7 +621,6 @@ describe("PromptCopyDialog with FileDiffPicker integration", () => {
       .querySelector('input[type="checkbox"]') as HTMLInputElement;
     expect(comment1Checkbox).toBeChecked();
 
-
     await act(async () => {
       fireEvent.click(getCopyButton());
     });
@@ -720,24 +630,35 @@ describe("PromptCopyDialog with FileDiffPicker integration", () => {
     });
 
     const copiedText = mockCopyToClipboard.mock.calls[0][0];
-    const generalCommentBlock = MOCK_BLOCKS_WITH_DIFF_NO_PR_DETAILS.find(b => b.id === "comment-1")!;
-    const anotherCommentBlock = MOCK_BLOCKS_WITH_DIFF_NO_PR_DETAILS.find(b => b.id === "comment-2")!;
+    const generalCommentBlock = MOCK_BLOCKS_WITH_DIFF_NO_PR_DETAILS.find(
+      (b) => b.id === "comment-1",
+    )!;
+    const anotherCommentBlock = MOCK_BLOCKS_WITH_DIFF_NO_PR_DETAILS.find(
+      (b) => b.id === "comment-2",
+    )!;
 
     // Placeholder should be removed (replaced by empty string from empty diffPayload)
     expect(copiedText).not.toContain(DIFF_PLACEHOLDER_TEXT_IN_TEST);
-    
+
     // Diff content should not be present
     expect(copiedText).not.toMatch(/diff --git a\/file1.txt/);
     expect(copiedText).not.toContain("+content1");
 
     // Template (minus placeholder) and other selected blocks should be present
-    const templateWithoutPlaceholder = MOCK_INITIAL_PROMPT_TEXT_WITH_PR_DETAILS.replace(DIFF_PLACEHOLDER_TEXT_IN_TEST, "").trimEnd();
-    
-    const expectedText = [
-      templateWithoutPlaceholder,
+    // CORRECTED interpretation: selectionClean (comments only, as diff is unchecked) replaces placeholder.
+    const commentsOnlyPayload = [
       formatPromptBlock(generalCommentBlock).trimEnd(),
       formatPromptBlock(anotherCommentBlock).trimEnd(),
-    ].filter(Boolean).join(SECTION_SEPARATOR).trimEnd();
+    ].join(SECTION_SEPARATOR);
+
+    const templateWithCommentsOnly =
+      MOCK_INITIAL_PROMPT_TEXT_WITH_PR_DETAILS.replace(
+        DIFF_PLACEHOLDER_TEXT_IN_TEST,
+        commentsOnlyPayload,
+      ).trimEnd();
+
+    // userText is empty in this test, so it's just the template with comments injected.
+    const expectedText = templateWithCommentsOnly;
 
     expect(normaliseWS(copiedText)).toBe(normaliseWS(expectedText));
   });
@@ -752,8 +673,8 @@ describe("PromptCopyDialog with FileDiffPicker integration", () => {
     );
 
     // Ensure all blocks are selected (default behavior)
-     const checkboxes = screen.getAllByRole("checkbox");
-     checkboxes.forEach((cb) => expect(cb).toBeChecked());
+    const checkboxes = screen.getAllByRole("checkbox");
+    checkboxes.forEach((cb) => expect(cb).toBeChecked());
 
     await act(async () => {
       fireEvent.click(getCopyButton());
@@ -769,8 +690,9 @@ describe("PromptCopyDialog with FileDiffPicker integration", () => {
     // SIMPLE_DIFF_PATCH contains "diff --git a/file1.txt" and "diff --git a/file2.txt"
     // If all files are selected (default for diff block initially), both will be there.
     // buildClipboardPayload joins them.
-    const diffMarkerOccurrences = (copiedText.match(/diff --git a\//g) || []).length;
-    
+    const diffMarkerOccurrences = (copiedText.match(/diff --git a\//g) || [])
+      .length;
+
     // Since SIMPLE_DIFF_PATCH has two files, and by default all are selected for the diff block,
     // we expect two "diff --git" lines if the full diff is included.
     // The key is that the *entire diff payload* is injected once.

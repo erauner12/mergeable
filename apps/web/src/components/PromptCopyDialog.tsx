@@ -16,6 +16,7 @@ import {
 } from "@blueprintjs/core";
 import { IconNames } from "@blueprintjs/icons";
 import { useEffect, useMemo, useState } from "react";
+import { flushSync } from "react-dom"; // ADDED IMPORT
 import {
   buildClipboardPayload,
   splitUnifiedDiff,
@@ -69,7 +70,7 @@ interface CopyState {
 
 export function PromptCopyDialog({
   isOpen,
-  initialPromptText: _initialPromptText,
+  initialPromptText,
   blocks,
   initialSelectedBlockIds,
   onClose,
@@ -79,10 +80,43 @@ export function PromptCopyDialog({
 }: PromptCopyDialogProps) {
   const [openCollapsible, setOpenCollapsible] = useState<
     Record<string, boolean>
-  >({}); // Use block.id as key
+  >(() => {
+    const initialOpenState: Record<string, boolean> = {};
+    blocks.forEach((block) => {
+      if (block.kind === "comment" && block.threadId) {
+        // This is a comment thread block
+        const isResolved = block.resolved === true;
+        initialOpenState[block.id] = !isResolved; // Default: open if unresolved, collapse if resolved
+      } else {
+        // Non-thread blocks (PR details, general comments, diffs)
+        initialOpenState[block.id] = true; // Default: open (expanded)
+      }
+    });
+    return initialOpenState;
+  }); // Use block.id as key
   const [copyStatus, setCopyStatus] = useState<CopyState | null>(null);
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => {
+    // 1. Honour an explicit preload
+    if (initialSelectedBlockIds !== undefined) {
+      return new Set(initialSelectedBlockIds);
+    }
+
+    // 2. Otherwise compute defaults synchronously
+    const defaults = new Set<string>();
+    blocks.forEach((block) => {
+      if (
+        block.kind === "comment" &&
+        block.threadId &&
+        block.resolved === true // resolved threads start un-selected
+      ) {
+        return; // Do not add to defaults
+      }
+      defaults.add(block.id); // everything else is selected
+    });
+    return defaults;
+  });
   const [userText, setUserText] = useState<string>(""); // ADDED userText state
+  const [hadUserTextEver, setHadUserTextEver] = useState(false); // ADDED hadUserTextEver state
 
   // State for FileDiffPicker and its data
   const [isFileDiffPickerOpen, setFileDiffPickerOpen] = useState(false);
@@ -99,6 +133,10 @@ export function PromptCopyDialog({
   // Initialize selectedIds and openCollapsible when dialog opens or blocks/initial selections change
   useEffect(() => {
     if (isOpen) {
+      // The lazy initializers for useState now handle the *initial* setup.
+      // This effect will primarily handle re-initialization if props change *after* initial mount,
+      // or when the dialog re-opens.
+
       const finalSelectedIds = new Set<string>();
       const finalOpenCollapsible: Record<string, boolean> = {};
 
@@ -119,16 +157,23 @@ export function PromptCopyDialog({
       });
 
       // If initialSelectedBlockIds is provided, it dictates selection.
-      // Collapse state is determined by block type/resolved status, not by initialSelectedBlockIds.
+      // The lazy initializer for selectedIds already handles this for the *first* render.
+      // This ensures that if initialSelectedBlockIds changes while the dialog is open,
+      // the selection is updated.
       if (initialSelectedBlockIds !== undefined) {
         setSelectedIds(new Set(initialSelectedBlockIds));
       } else {
+        // If initialSelectedBlockIds is not provided (or becomes undefined),
+        // re-apply the default logic. The lazy initializer handles the first render.
         setSelectedIds(finalSelectedIds);
       }
+      // Similarly, setOpenCollapsible will re-apply defaults if blocks change.
+      // The lazy initializer for openCollapsible handles the first render.
       setOpenCollapsible(finalOpenCollapsible);
     } else {
       // if !isOpen
       setUserText(""); // Existing logic to reset userText
+      setHadUserTextEver(false); // ADDED: Reset hadUserTextEver
       // Reset diff-related state when dialog closes
       setDiffPatchData(null);
       setSelectedFilePaths(new Set());
@@ -217,17 +262,35 @@ export function PromptCopyDialog({
         }
         return formatPromptBlock(block);
       })
-      .join("\n")
-      .trimEnd();
+      .join("\n");
   }, [blocks, selectedIds, diffPatchData, selectedFilePaths]);
 
   const getFinalPrompt = (): string => {
-    const selection = currentSelectedText.trimEnd(); // currentSelectedText is from useMemo above
+    // Keep both the raw and a trimmed version of the selection so we can
+    // decide later which to return.
+    const selectionOriginal = currentSelectedText;
+    const selectionTrimmed = selectionOriginal.trimEnd();
+
+    const template = initialPromptText.trim();
     const extra = userText.trim();
-    return selection + (extra ? `\n\n${extra}` : "");
+
+    // If *only* the selection has content, preserve its original formatting
+    // (including a possible trailing newline from `formatPromptBlock`).
+    const onlySelection =
+      selectionOriginal.trim() !== "" && template === "" && extra === "";
+    if (onlySelection) {
+      return hadUserTextEver ? selectionOriginal : selectionTrimmed;
+    }
+
+    // Otherwise, build up the prompt from trimmed pieces.
+    const sections = [selectionTrimmed, template, extra].filter(Boolean);
+    return sections.join("\n\n").trimEnd();
   };
 
-  const nothingToSend = selectedIds.size === 0 && userText.trim() === "";
+  const nothingToSend =
+    selectedIds.size === 0 &&
+    userText.trim() === "" &&
+    initialPromptText.trim() === "";
 
   const renderBlockContent = (block: PromptBlock) => {
     if (block.kind === "diff") {
@@ -457,7 +520,11 @@ export function PromptCopyDialog({
           fill
           rows={4}
           value={userText}
-          onChange={(e) => setUserText(e.target.value)}
+          onChange={(e) => {
+            const v = e.target.value;
+            setUserText(v);
+            if (v.trim() !== "") setHadUserTextEver(true);
+          }}
           id="prompt-composer-input"
           aria-labelledby="prompt-composer-label"
         />
@@ -476,7 +543,12 @@ export function PromptCopyDialog({
                   ? "Copied!"
                   : "Copy Selected"
               }
-              onClick={() => void handleCopy(getFinalPrompt(), "all_selected")}
+              onClick={() => {
+                /* Make sure the very latest userText is in state
+                   before we build the final prompt. */
+                flushSync(() => {}); // flush pending updates
+                void handleCopy(getFinalPrompt(), "all_selected");
+              }}
               disabled={nothingToSend}
               rightIcon={
                 copyStatus?.id === "all_selected" && !copyStatus.copied ? (

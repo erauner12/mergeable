@@ -73,20 +73,16 @@ export async function setPromptTemplate(
   text: string,
 ): Promise<void> {
   if (mode === "implement") {
-    // For "implement", update both new and legacy keys to keep them in sync during transition
-    // or if other parts of the app still use getBasePrompt/setBasePrompt directly.
-    // Primarily, we'll use the new key.
-    await db.settings.put({
-      key: keyFor("implement"),
-      value: text,
-    } as SettingsEntry<string>);
-    // Optionally, update the old key too, or decide to fully migrate.
-    // For now, let's ensure new key is primary for "implement".
-    // await setBasePrompt(text); // This might be redundant if getBasePrompt also checks new key.
-    // Let's simplify: "implement" mode uses its specific key. getBasePrompt is now a legacy fallback.
+    /* Keep **both** keys in sync – tests rely on this during the transition period. */
+    await db.settings.put(
+      { key: keyFor("implement"), value: text } as SettingsEntry<string>,
+    );
+    await db.settings.put(
+      { key: "basePromptTemplate", value: text } as SettingsEntry<string>,
+    );
+    return; // early-return so we don't fall through to the generic write below
   }
-  await db.settings.put({
-    key: keyFor(mode),
-    value: text,
-  } as SettingsEntry<string>);
+  await db.settings.put(
+    { key: keyFor(mode), value: text } as SettingsEntry<string>,
+  );
 }

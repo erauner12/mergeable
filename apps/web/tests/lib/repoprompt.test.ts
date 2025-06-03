@@ -2,13 +2,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PullRequestCommit } from "../../src/lib/github/client"; // Import renamed type
 import * as gh from "../../src/lib/github/client"; // ← stub network call
+import * as repopromptModule from "../../src/lib/repoprompt"; // ADDED: Namespace import
 import {
   buildRepoPromptText,
   buildRepoPromptUrl,
-  type ResolvedPullMeta,
   type CommentBlockInput,
+  defaultPromptMode, // Import defaultPromptMode
+  type PromptMode,
+  type ResolvedPullMeta,
 } from "../../src/lib/repoprompt";
-import * as repopromptModule from "../../src/lib/repoprompt"; // ADDED: Namespace import
 import { isDiffBlock } from "../../src/lib/repoprompt.guards";
 import * as settings from "../../src/lib/settings";
 // Assuming mockPull is imported from a shared testing utility like "../testing"
@@ -23,18 +25,13 @@ import { mockPull } from "../testing";
 // REMOVED: vi.mock for "../../src/lib/repoprompt"
 
 // Mock fetchPullComments
-// const mockFetchPullComments = vi.fn(); // OLD: Causes TDZ
-// let mockFetchPullComments: ReturnType<typeof vi.fn>; // NEW: Declare with let
-// We need this variable to exist *before* the hoisted factory runs, so use `var`
-// (var-bindings are hoisted and initialised with `undefined`, removing the TDZ)
-var mockFetchPullComments: ReturnType<typeof vi.fn>;
-
 vi.mock("../../src/lib/github/client", async (importOriginal) => {
-  const originalClient = await importOriginal<typeof import("../../src/lib/github/client")>();
-  mockFetchPullComments = vi.fn(); // NEW: Initialize inside the factory
+  const originalClient =
+    // eslint-disable-next-line @typescript-eslint/consistent-type-imports
+    await importOriginal<typeof import("../../src/lib/github/client")>();
   return {
     ...originalClient,
-    fetchPullComments: mockFetchPullComments, // Mock the new function
+    fetchPullComments: vi.fn(), // Mock the new function
     // Keep existing mocks if gitHubClient instance is used directly, or mock its methods if used via instance
     // For this test, we are mocking specific functions from the module, so this should be fine.
     // If buildRepoPromptText uses an instance of gitHubClient, that instance's methods need mocking.
@@ -42,9 +39,8 @@ vi.mock("../../src/lib/github/client", async (importOriginal) => {
   };
 });
 
-
 describe("buildRepoPromptUrl", () => {
-  let logRepoPromptCallSpy: ReturnType<typeof vi.spyOn>; // ADDED: Spy variable
+  let logRepoPromptCallSpy!: ReturnType<typeof vi.spyOn>; // Corrected definite assignment
 
   beforeEach(() => {
     vi.spyOn(gh, "getPullRequestMeta").mockResolvedValue({
@@ -123,7 +119,7 @@ describe("buildRepoPromptUrl", () => {
 });
 
 describe("buildRepoPromptText", () => {
-  let logRepoPromptCallSpy: ReturnType<typeof vi.spyOn>; // ADDED: Spy variable
+  let logRepoPromptCallSpy!: ReturnType<typeof vi.spyOn>; // Corrected definite assignment
   const mockResolvedMeta: ResolvedPullMeta = {
     owner: "owner",
     repo: "myrepo",
@@ -131,22 +127,27 @@ describe("buildRepoPromptText", () => {
     files: ["src/main.ts", "README.md"],
     rootPath: "/tmp/myrepo",
   };
+  // Loosen the type even more – any mock instance is fine for tests
+  let getPromptTemplateSpy: any;
 
   beforeEach(() => {
     vi.spyOn(gh, "getPullRequestDiff").mockResolvedValue(
       "dummy pr diff content",
     );
-    mockFetchPullComments.mockResolvedValue([]); // Default mock for new function
+    vi.mocked(gh.fetchPullComments).mockResolvedValue([]); // Default mock for new function
     vi.spyOn(gh, "listPrCommits").mockResolvedValue([]);
     vi.spyOn(gh, "getCommitDiff").mockResolvedValue(
       "dummy commit diff content",
     );
-    // Old: repoPrompt pulled base prompt through getBasePrompt()
-    // jest.spyOn(settings, "getBasePrompt")
-    //     .mockResolvedValue("TEST_BASE_PROMPT");
-    // New: it uses getPromptTemplate(mode)
-    vi.spyOn(settings, "getPromptTemplate")
-        .mockResolvedValue("TEST_BASE_PROMPT");
+    // Updated: Generic mock for getPromptTemplate
+    getPromptTemplateSpy = vi
+      .spyOn(settings, "getPromptTemplate")
+      .mockImplementation((mode: PromptMode) =>
+        Promise.resolve(`MOCK_PROMPT_FOR_${mode.toUpperCase()}`),
+      );
+    // REMOVED: Mock for getBasePrompt as it's no longer directly used or is a fallback.
+    // The new getPromptTemplate mock covers all modes.
+
     // getDefaultRoot is not called by buildRepoPromptText if meta (with rootPath) is passed
     // ADDED: Initialize spy
     logRepoPromptCallSpy = vi
@@ -168,81 +169,114 @@ describe("buildRepoPromptText", () => {
       url: "https://github.com/owner/myrepo/pull/123",
       branch: "feature-branch",
       files: ["src/main.ts", "README.md"],
-      author: { id: "u1", name: "testauthor", avatarUrl: "avatar.url", bot: false },
+      author: {
+        id: "u1",
+        name: "testauthor",
+        avatarUrl: "avatar.url",
+        bot: false,
+      },
       createdAt: "2024-01-01T00:00:00Z",
     });
 
     const { promptText, blocks } = await buildRepoPromptText(
       pull,
       {}, // No diffs, no comments requested
-      undefined,
+      // Using legacy signature for this test, mode will be defaultPromptMode ('implement')
+      undefined, // endpoint
       mockResolvedMeta,
     );
+
+    expect(getPromptTemplateSpy).toHaveBeenCalledWith(defaultPromptMode); // Verify it was called with default mode
 
     expect(blocks.length).toBe(1); // Only PR details block
     expect(blocks[0].kind).toBe("comment");
     expect(blocks[0].id).toBe(`pr-details-${pull.id}`);
-    expect((blocks[0] as CommentBlockInput).header).toContain("### PR #123 DETAILS: My Test PR");
+    expect((blocks[0] as CommentBlockInput).header).toContain(
+      "### PR #123 DETAILS: My Test PR",
+    );
     expect((blocks[0] as CommentBlockInput).commentBody).toBe("PR Body here.");
 
     expect(promptText).toContain("## SETUP");
     expect(promptText).toContain("cd /tmp/myrepo");
     expect(promptText).toContain("git checkout feature-branch");
-    expect(promptText).toContain("TEST_BASE_PROMPT");
+    expect(promptText).toContain(
+      `MOCK_PROMPT_FOR_${defaultPromptMode.toUpperCase()}`,
+    ); // Check for mocked template
     expect(promptText).toContain("### PR #123 DETAILS: My Test PR"); // From PR details block
     expect(promptText).toContain("> _testauthor · 2024-Jan-01_"); // Formatted author/date
     expect(promptText).toContain("PR Body here.");
     expect(promptText).toContain("🔗 https://github.com/owner/myrepo/pull/123");
     expect(promptText).not.toContain("### FULL PR DIFF");
     expect(promptText).not.toContain("### LAST COMMIT");
-    expect(mockFetchPullComments).not.toHaveBeenCalled();
+    expect(vi.mocked(gh.fetchPullComments)).not.toHaveBeenCalled();
     expect(logRepoPromptCallSpy).not.toHaveBeenCalled(); // UPDATED: Use spy
   });
 
   it("should include comments if specified, potentially as threads", async () => {
-    const pull = mockPull({ number: 123, repo: "owner/myrepo", branch: "feature-branch", files: [] });
+    const pull = mockPull({
+      number: 123,
+      repo: "owner/myrepo",
+      branch: "feature-branch",
+      files: [],
+    });
     // This mock data now represents what fetchPullComments would return:
     // already processed blocks, some of which could be threads.
     const mockCommentBlocks: CommentBlockInput[] = [
       {
-        id: "thread-1-comment-abc", kind: "comment",
+        id: "thread-1-comment-abc",
+        kind: "comment",
         header: "### THREAD ON src/file.ts#L10 (1 comment)",
         commentBody: "> _@author1 · Jan 01, 2024 00:00 UTC_\n\nBody 1", // Formatted by makeThreadBlock
-        author: "author1", timestamp: "2024-01-01T00:00:00Z",
-        threadId: "review-thread-1", diffHunk: "@@ -1,1 +1,1 @@\n-old line\n+new line",
-        filePath: "src/file.ts", line: 10,
+        author: "author1",
+        timestamp: "2024-01-01T00:00:00Z",
+        threadId: "review-thread-1",
+        diffHunk: "@@ -1,1 +1,1 @@\n-old line\n+new line",
+        filePath: "src/file.ts",
+        line: 10,
       },
       {
-        id: "issue-2", kind: "comment",
+        id: "issue-2",
+        kind: "comment",
         header: "### ISSUE COMMENT by @author2",
         commentBody: "Just a top-level comment.",
-        author: "author2", timestamp: "2024-01-02T00:00:00Z",
+        author: "author2",
+        timestamp: "2024-01-02T00:00:00Z",
         // No threadId or diffHunk for simple issue comments
-      }
+      },
     ];
-    mockFetchPullComments.mockResolvedValue(mockCommentBlocks);
+    vi.mocked(gh.fetchPullComments).mockResolvedValue(mockCommentBlocks);
     const endpoint = { auth: "token", baseUrl: "url" };
 
     const { blocks, promptText } = await buildRepoPromptText(
       pull,
       { includeComments: true }, // Comments are not initially selected for promptText by default
+      defaultPromptMode, // Explicitly pass mode
       endpoint,
       mockResolvedMeta,
     );
 
-    expect(mockFetchPullComments).toHaveBeenCalledWith(endpoint, "owner", "myrepo", 123);
+    expect(vi.mocked(gh.fetchPullComments)).toHaveBeenCalledWith(
+      endpoint,
+      "owner",
+      "myrepo",
+      123,
+    );
     expect(blocks.length).toBe(1 + mockCommentBlocks.length); // PR Details + mocked comment blocks
 
-    const threadBlock = blocks.find(b => b.id === "thread-1-comment-abc");
+    const threadBlock = blocks.find((b) => b.id === "thread-1-comment-abc");
     expect(threadBlock).toBeDefined();
     expect(threadBlock?.kind).toBe("comment");
     if (threadBlock?.kind === "comment") {
-      expect(threadBlock.header).toBe("### THREAD ON src/file.ts#L10 (1 comment)");
-      expect(threadBlock.diffHunk).toBe("@@ -1,1 +1,1 @@\n-old line\n+new line");
+      expect(threadBlock.header).toBe(
+        "### THREAD ON src/file.ts#L10 (1 comment)",
+      );
+      expect(threadBlock.diffHunk).toBe(
+        "@@ -1,1 +1,1 @@\n-old line\n+new line",
+      );
       expect(threadBlock.commentBody).toContain("> _@author1"); // Check for formatted body
     }
-    
-    const issueBlock = blocks.find(b => b.id === "issue-2");
+
+    const issueBlock = blocks.find((b) => b.id === "issue-2");
     expect(issueBlock).toBeDefined();
     if (issueBlock?.kind === "comment") {
       expect(issueBlock.header).toBe("### ISSUE COMMENT by @author2");
@@ -258,7 +292,6 @@ describe("buildRepoPromptText", () => {
     expect(promptText).not.toContain("### ISSUE COMMENT by @author2");
   });
 
-
   it("should include full PR diff if specified, after PR details", async () => {
     const pull = mockPull({
       number: 123,
@@ -269,6 +302,7 @@ describe("buildRepoPromptText", () => {
     const { promptText, blocks } = await buildRepoPromptText(
       pull,
       { includePr: true },
+      defaultPromptMode, // Explicitly pass mode
       undefined,
       mockResolvedMeta,
     );
@@ -281,7 +315,7 @@ describe("buildRepoPromptText", () => {
       undefined, // Add undefined for baseUrl
     );
     expect(blocks.length).toBe(2); // PR Details + PR Diff
-    const diffBlock = blocks.find(b => b.kind === "diff"); // Find by kind first
+    const diffBlock = blocks.find((b) => b.kind === "diff"); // Find by kind first
     expect(diffBlock).toBeDefined();
     if (diffBlock && isDiffBlock(diffBlock)) {
       expect(diffBlock.id).toContain("diff-pr");
@@ -290,7 +324,7 @@ describe("buildRepoPromptText", () => {
     } else {
       throw new Error("Diff block not found or not of correct type");
     }
-    
+
     // promptText contains initially selected blocks (PR details + PR diff)
     expect(promptText).toContain("### PR #123 DETAILS");
     expect(promptText).toContain("### FULL PR DIFF");
@@ -298,16 +332,25 @@ describe("buildRepoPromptText", () => {
   });
 
   it("should correctly order PR details, comments (including threads), and diff blocks in the 'allPromptBlocks' array", async () => {
-    const pull = mockPull({ number: 789, repo: "owner/myrepo", branch: "feature-branch", files: [] });
+    const pull = mockPull({
+      number: 789,
+      repo: "owner/myrepo",
+      branch: "feature-branch",
+      files: [],
+    });
     const mockThreadBlock: CommentBlockInput = {
-      id: "thread-1-comment-xyz", kind: "comment",
+      id: "thread-1-comment-xyz",
+      kind: "comment",
       header: "### THREAD ON main.py#L5 (1 comment)",
       commentBody: "> _@commenter · Jan 02, 2024 00:00 UTC_\n\nComment body",
-      author: "commenter", timestamp: "2024-01-02T00:00:00Z",
-      threadId: "review-thread-for-ordering", diffHunk: "diff hunk content",
-      filePath: "main.py", line: 5,
+      author: "commenter",
+      timestamp: "2024-01-02T00:00:00Z",
+      threadId: "review-thread-for-ordering",
+      diffHunk: "diff hunk content",
+      filePath: "main.py",
+      line: 5,
     };
-    mockFetchPullComments.mockResolvedValue([mockThreadBlock]);
+    vi.mocked(gh.fetchPullComments).mockResolvedValue([mockThreadBlock]);
     vi.spyOn(gh, "getPullRequestDiff").mockResolvedValue("PR DIFF CONTENT");
     const endpoint = { auth: "token", baseUrl: "url" };
 
@@ -316,8 +359,9 @@ describe("buildRepoPromptText", () => {
       // includeComments: true means they are fetched and added to `allPromptBlocks`
       // includePr: true means PR diff is fetched and added to `allPromptBlocks` and `initiallySelectedBlocks`
       { includeComments: true, includePr: true },
+      defaultPromptMode, // Explicitly pass mode
       endpoint,
-      mockResolvedMeta
+      mockResolvedMeta,
     );
 
     // Order in allPromptBlocks: PR Details, then Comments, then Diffs
@@ -327,7 +371,7 @@ describe("buildRepoPromptText", () => {
     expect(blocks[2].id).toContain("diff-pr"); // Then diffs
   });
 
-// ... (keep and adapt other diff-related tests, ensuring they check for block.kind === 'diff' and correct IDs) ...
+  // ... (keep and adapt other diff-related tests, ensuring they check for block.kind === 'diff' and correct IDs) ...
 
   it("should include last commit diff if specified", async () => {
     const mockLastCommit = {
@@ -346,17 +390,24 @@ describe("buildRepoPromptText", () => {
     const { blocks } = await buildRepoPromptText(
       pull,
       { includeLastCommit: true },
+      defaultPromptMode, // Explicitly pass mode
       undefined,
       mockResolvedMeta,
     );
-    
-    const diffBlock = blocks.find(b => b.id === `diff-last-commit-${mockLastCommit.sha}`);
+
+    const diffBlock = blocks.find(
+      (b) => b.id === `diff-last-commit-${mockLastCommit.sha}`,
+    );
     expect(diffBlock).toBeDefined();
     if (diffBlock && isDiffBlock(diffBlock)) {
-      expect(diffBlock.header).toContain('### LAST COMMIT (lastsha — "Last commit title")');
+      expect(diffBlock.header).toContain(
+        '### LAST COMMIT (lastsha — "Last commit title")',
+      );
       expect(diffBlock.patch).toBe("diff for lastsha1");
     } else {
-      throw new Error("Last commit diff block not found or not of correct type");
+      throw new Error(
+        "Last commit diff block not found or not of correct type",
+      );
     }
   });
 
@@ -380,35 +431,166 @@ describe("buildRepoPromptText", () => {
     const { blocks } = await buildRepoPromptText(
       pull,
       { commits: ["specsha1", "specsha2"] },
+      defaultPromptMode, // Explicitly pass mode
       undefined,
       mockResolvedMeta,
     );
 
-    const diffBlock1 = blocks.find(b => b.id === `diff-commit-specsha1`);
+    const diffBlock1 = blocks.find((b) => b.id === `diff-commit-specsha1`);
     expect(diffBlock1).toBeDefined();
     if (diffBlock1 && isDiffBlock(diffBlock1)) {
-      expect(diffBlock1.header).toContain('### COMMIT (specsha — "Specific commit ONE")');
+      expect(diffBlock1.header).toContain(
+        '### COMMIT (specsha — "Specific commit ONE")',
+      );
       expect(diffBlock1.patch).toBe("diff for specsha1");
     } else {
-      throw new Error("Specific commit diff block 1 not found or not of correct type");
+      throw new Error(
+        "Specific commit diff block 1 not found or not of correct type",
+      );
     }
 
-    const diffBlock2 = blocks.find(b => b.id === `diff-commit-specsha2`);
+    const diffBlock2 = blocks.find((b) => b.id === `diff-commit-specsha2`);
     expect(diffBlock2).toBeDefined();
     if (diffBlock2 && isDiffBlock(diffBlock2)) {
-      expect(diffBlock2.header).toContain('### COMMIT (specsha — "Specific commit TWO")');
+      expect(diffBlock2.header).toContain(
+        '### COMMIT (specsha — "Specific commit TWO")',
+      );
       expect(diffBlock2.patch).toBe("diff for specsha2");
     } else {
-      throw new Error("Specific commit diff block 2 not found or not of correct type");
+      throw new Error(
+        "Specific commit diff block 2 not found or not of correct type",
+      );
     }
+  });
+
+  // New Test Case A: "review" mode + comments requested
+  it("should use review prompt and include comments for 'review' mode when requested", async () => {
+    const pull = mockPull({
+      number: 201,
+      repo: "owner/reviewrepo",
+      branch: "review-branch",
+      files: [],
+    });
+    const mockCommentBlocks: CommentBlockInput[] = [
+      {
+        id: "comment-rev-1",
+        kind: "comment",
+        header: "Review Comment",
+        commentBody: "Needs changes",
+        author: "reviewer",
+        timestamp: "2024-01-01T00:00:00Z",
+      },
+    ];
+    vi.mocked(gh.fetchPullComments).mockResolvedValue(mockCommentBlocks);
+    const endpoint = { auth: "token", baseUrl: "url" };
+
+    const { promptText, blocks } = await buildRepoPromptText(
+      pull,
+      { includeComments: true },
+      "review", // mode
+      endpoint,
+      { ...mockResolvedMeta, repo: "reviewrepo", branch: "review-branch" },
+    );
+
+    expect(getPromptTemplateSpy).toHaveBeenCalledWith("review");
+    expect(promptText).toContain("MOCK_PROMPT_FOR_REVIEW");
+    expect(vi.mocked(gh.fetchPullComments)).toHaveBeenCalled();
+    expect(blocks.some((b) => b.id === "comment-rev-1")).toBe(true);
+    // Comments are not part of initial promptText by default, even if fetched
+    expect(promptText).not.toContain("Review Comment");
+    expect(promptText).toContain("### PR #201 DETAILS"); // PR details are always in promptText
+  });
+
+  // New Test Case B: "adjust-pr" mode should not auto-select comments/diffs for promptText
+  it("should only include PR details in initial promptText for 'adjust-pr' mode, even if diffs/comments are requested via options", async () => {
+    const pull = mockPull({
+      number: 202,
+      repo: "owner/adjustrepo",
+      branch: "adjust-branch",
+      files: [],
+      body: "Original Body",
+    });
+    vi.spyOn(gh, "getPullRequestDiff").mockResolvedValue("PR DIFF FOR ADJUST");
+    const mockCommentBlocks: CommentBlockInput[] = [
+      {
+        id: "comment-adj-1",
+        kind: "comment",
+        header: "Adjust Comment",
+        commentBody: "A comment",
+        author: "adjuster",
+        timestamp: "2024-01-01T00:00:00Z",
+      },
+    ];
+    vi.mocked(gh.fetchPullComments).mockResolvedValue(mockCommentBlocks);
+    const endpoint = { auth: "token", baseUrl: "url" };
+
+    const { promptText, blocks } = await buildRepoPromptText(
+      pull,
+      { includePr: true, includeComments: true, includeLastCommit: true }, // Request all
+      "adjust-pr", // mode
+      endpoint,
+      { ...mockResolvedMeta, repo: "adjustrepo", branch: "adjust-branch" },
+    );
+
+    expect(getPromptTemplateSpy).toHaveBeenCalledWith("adjust-pr");
+    expect(promptText).toContain("MOCK_PROMPT_FOR_ADJUST-PR");
+
+    // Check all blocks were generated and are available in `blocks`
+    expect(blocks.some((b) => b.id.startsWith("pr-details"))).toBe(true);
+    expect(blocks.some((b) => b.id.startsWith("diff-pr"))).toBe(true); // Diff was fetched
+    expect(blocks.some((b) => b.id === "comment-adj-1")).toBe(true); // Comments were fetched
+
+    // Check initialSelectedBlockIds (derived from promptText content)
+    // For "adjust-pr", the plan was: "pre-select only the PR details. Diff blocks (full PR, last commit) are only pre-selected if explicitly chosen by the user via checkboxes. Comment blocks are not pre-selected."
+    // The current implementation of buildRepoPromptText adds diffs to initiallySelectedBlocks if their options are true.
+    // The prompt for "adjust-pr" itself guides the LLM.
+    // So, if includePr is true, the diff WILL be in the promptText.
+    // The key is that the *base prompt* for "adjust-pr" directs the LLM to focus on title/body.
+    // Let's verify the promptText content based on current logic:
+    expect(promptText).toContain("### PR #202 DETAILS");
+    expect(promptText).toContain("Original Body");
+    expect(promptText).toContain("PR DIFF FOR ADJUST"); // Because includePr was true
+    expect(promptText).not.toContain("Adjust Comment"); // Comments are not in initial prompt text
+  });
+
+  // New Test Case C: "respond" mode with comments only
+  it("should not call getPullRequestDiff for 'respond' mode if only comments are included", async () => {
+    const pull = mockPull({
+      number: 203,
+      repo: "owner/respondrepo",
+      branch: "respond-branch",
+      files: [],
+    });
+    const getPullRequestDiffSpy = vi.spyOn(gh, "getPullRequestDiff");
+    const mockCommentBlocks: CommentBlockInput[] = [
+      {
+        id: "comment-resp-1",
+        kind: "comment",
+        header: "Respond Comment",
+        commentBody: "A question",
+        author: "responder",
+        timestamp: "2024-01-01T00:00:00Z",
+      },
+    ];
+    vi.mocked(gh.fetchPullComments).mockResolvedValue(mockCommentBlocks);
+    const endpoint = { auth: "token", baseUrl: "url" };
+
+    const { promptText, blocks } = await buildRepoPromptText(
+      pull,
+      { includeComments: true, includePr: false, includeLastCommit: false }, // Only comments
+      "respond", // mode
+      endpoint,
+      { ...mockResolvedMeta, repo: "respondrepo", branch: "respond-branch" },
+    );
+
+    expect(getPromptTemplateSpy).toHaveBeenCalledWith("respond");
+    expect(promptText).toContain("MOCK_PROMPT_FOR_RESPOND");
+    expect(getPullRequestDiffSpy).not.toHaveBeenCalled();
+    expect(vi.mocked(gh.fetchPullComments)).toHaveBeenCalled();
+    expect(blocks.some((b) => b.id === "comment-resp-1")).toBe(true);
+    expect(promptText).not.toContain("Respond Comment"); // Comments not in initial prompt
+    expect(promptText).toContain("### PR #203 DETAILS");
   });
 });
 // Remove old tests for buildRepoPromptLink that checked prompt encoding or diff content in the URL
 // The old tests for buildRepoPromptLink are effectively split.
-// Some parts are now covered by buildRepoPromptUrl (URL structure, no prompt).
-// Other parts (diff content, prompt structure) are covered by buildRepoPromptText.
-// The test "fills missing branch & files via getPullRequestMeta() and includes PR diff"
-// would now be two separate tests:
-// 1. buildRepoPromptUrl calls getPullRequestMeta if branch/files missing.
-// 2. buildRepoPromptText (when meta is passed) correctly uses that meta, and if includePr, fetches diff.
-// The provided tests for buildRepoPromptUrl and buildRepoPromptText cover these aspects.

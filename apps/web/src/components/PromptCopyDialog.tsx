@@ -15,7 +15,7 @@ import {
   Tooltip,
 } from "@blueprintjs/core";
 import { IconNames } from "@blueprintjs/icons";
-import { useEffect, useMemo, useState } from "react"; // ADDED useCallback
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import {
   buildClipboardPayload,
@@ -130,10 +130,7 @@ export function PromptCopyDialog({
     allFilePaths: string[];
     sourceBlockId: string; // ID of the PromptBlock this diff data comes from
   } | null>(null);
-  const [selectedFilePaths, setSelectedFilePaths] = useState<Set<string>>(
-    new Set(),
-  );
-  const [hasPickedFiles, setHasPickedFiles] = useState(false); // ADDED state
+  const selectedFilePathsRef = useRef<Set<string>>(new Set());
 
   // Initialize selectedIds and openCollapsible when dialog opens or blocks/initial selections change
   useEffect(() => {
@@ -180,9 +177,8 @@ export function PromptCopyDialog({
       setUserText(""); // Existing logic to reset userText
       // Reset diff-related state when dialog closes
       setDiffPatchData(null);
-      setSelectedFilePaths(new Set());
+      selectedFilePathsRef.current = new Set();
       setFileDiffPickerOpen(false);
-      setHasPickedFiles(false); // ADDED: Reset hasPickedFiles
     }
   }, [isOpen, blocks, initialSelectedBlockIds]);
 
@@ -194,21 +190,17 @@ export function PromptCopyDialog({
         const parsedPatches = splitUnifiedDiff(diffBlock.patch);
         const allPaths = Object.keys(parsedPatches);
         // Ensure selectedFilePaths is set before diffPatchData to avoid race conditions in effects/memos
-        setSelectedFilePaths(new Set(allPaths)); // Default to all files selected
+        selectedFilePathsRef.current = new Set(allPaths); // Default to all files selected
         setDiffPatchData({
           patches: parsedPatches,
           allFilePaths: allPaths,
           sourceBlockId: diffBlock.id,
         });
-        // setHasPickedFiles(false); // Explicitly ensure it's false on new diff data load / dialog open
       } else {
         // Ensure reset if no diff block is found while open
         setDiffPatchData(null);
-        setSelectedFilePaths(new Set());
-        // setHasPickedFiles(false); // Also reset here
+        selectedFilePathsRef.current = new Set();
       }
-      // Reset hasPickedFiles whenever blocks change or dialog re-opens, before picker interaction
-      setHasPickedFiles(false);
     }
     // No else here, covered by the other useEffect for !isOpen which handles full reset
   }, [isOpen, blocks]);
@@ -261,34 +253,24 @@ export function PromptCopyDialog({
     );
   }, [blocks, selectedIds, selectedDiffBlock]);
 
-  const diffPayload = useMemo(() => {
-    if (!selectedDiffBlock || !diffPatchData) {
-      // selectedDiffBlock implies it's in selectedIds
-      return "";
-    }
-    // Ensure diffPatchData corresponds to the selectedDiffBlock
-    if (diffPatchData.sourceBlockId !== selectedDiffBlock.id) {
-      // This might happen if diffPatchData is stale or logic error.
-      // Safest to return empty string for diff content in this case.
-      console.warn(
-        "PromptCopyDialog: Mismatch between selectedDiffBlock and diffPatchData.sourceBlockId.",
-      );
-      return "";
-    }
-
-    return buildClipboardPayload({
-      selectedFiles: selectedFilePaths,
-      allFiles: diffPatchData.allFilePaths,
-      patches: diffPatchData.patches,
-    }).trimEnd();
-  }, [selectedDiffBlock, diffPatchData, selectedFilePaths]);
-  // END ADD NEW useMemo hooks
-
   // Refactored: Use new prompt assembly logic
-  const getFinalPrompt = (): string => {
+  const getFinalPrompt = useCallback((): string => {
     const template = initialPromptText.trim();
     const extra = userText.trim();
-    const diffSel = diffPayload?.trimEnd(); // may be '' or undefined
+
+    let diffSel = "";
+    if (
+      selectedDiffBlock &&
+      diffPatchData &&
+      diffPatchData.sourceBlockId === selectedDiffBlock.id
+    ) {
+      diffSel = buildClipboardPayload({
+        selectedFiles: selectedFilePathsRef.current,
+        allFiles: diffPatchData.allFilePaths,
+        patches: diffPatchData.patches,
+      }).trimEnd();
+    }
+
     const commentSel = selectedNonDiffText?.trimEnd(); // may be '' or undefined
 
     const parts: (string | undefined)[] = [];
@@ -323,7 +305,13 @@ export function PromptCopyDialog({
     }
 
     return joinBlocks(parts.filter(Boolean) as string[]).trimEnd();
-  };
+  }, [
+    initialPromptText,
+    userText,
+    selectedDiffBlock,
+    diffPatchData,
+    selectedNonDiffText,
+  ]);
 
   const nothingToSend =
     selectedIds.size === 0 &&
@@ -352,7 +340,23 @@ export function PromptCopyDialog({
 
     console.log("selectedNonDiffText →", selectedNonDiffText);
 
-    console.log("diffPayload (first 250 chars) →", diffPayload.slice(0, 250));
+    // Calculate diffPayload inline for debugging
+    let diffPayloadForDebug = "";
+    if (
+      selectedDiffBlock &&
+      diffPatchData &&
+      diffPatchData.sourceBlockId === selectedDiffBlock.id
+    ) {
+      diffPayloadForDebug = buildClipboardPayload({
+        selectedFiles: selectedFilePathsRef.current,
+        allFiles: diffPatchData.allFilePaths,
+        patches: diffPatchData.patches,
+      }).trimEnd();
+    }
+    console.log(
+      "diffPayload (first 250 chars) →",
+      diffPayloadForDebug.slice(0, 250),
+    );
 
     // What will actually be copied if the user presses "Copy Selected"
     console.log(
@@ -367,8 +371,9 @@ export function PromptCopyDialog({
     selectedIds,
     selectedDiffBlock,
     selectedNonDiffText,
-    diffPayload,
+    diffPatchData, // Changed from diffPayload to diffPatchData since that's what affects the diff content
     userText, // Add userText to dependencies since it affects getFinalPrompt
+    getFinalPrompt, // Add getFinalPrompt to fix ESLint warning
   ]);
   // DEBUG –––––––––––––––––––––––––––––––––––––––––––––––––––
 
@@ -379,29 +384,20 @@ export function PromptCopyDialog({
         diffPatchData && block.id === diffPatchData.sourceBlockId;
 
       if (isActiveManagedDiffBlock && selectedIds.has(block.id)) {
-        if (hasPickedFiles) {
-          // User has interacted with the picker, show the selection based on buildClipboardPayload
-          const currentDiffSelectionContent = buildClipboardPayload({
-            selectedFiles: selectedFilePaths,
-            allFiles: diffPatchData.allFilePaths,
-            patches: diffPatchData.patches,
-          });
-          const displayContent = currentDiffSelectionContent.trimEnd();
-          return (
-            <pre className={`${Classes.CODE_BLOCK} ${styles.codeBlock}`}>
-              {displayContent.length > 0
-                ? displayContent
-                : "(No files selected or diff is empty)"}
-            </pre>
-          );
-        } else {
-          // User has not yet picked, or state was reset. Show the original full patch of this block.
-          return (
-            <pre className={`${Classes.CODE_BLOCK} ${styles.codeBlock}`}>
-              {block.patch.trimEnd()}
-            </pre>
-          );
-        }
+        // Always show the current selection in selectedFilePathsRef
+        const currentDiffSelectionContent = buildClipboardPayload({
+          selectedFiles: selectedFilePathsRef.current,
+          allFiles: diffPatchData.allFilePaths,
+          patches: diffPatchData.patches,
+        });
+        const displayContent = currentDiffSelectionContent.trimEnd();
+        return (
+          <pre className={`${Classes.CODE_BLOCK} ${styles.codeBlock}`}>
+            {displayContent.length > 0
+              ? displayContent
+              : "(No files selected or diff is empty)"}
+          </pre>
+        );
       }
       // For other diff blocks (if any) or if the main diff block isn't selected for detailed view, show its original patch
       return (
@@ -509,7 +505,7 @@ export function PromptCopyDialog({
                     <div className={styles.diffControls}>
                       <span className={styles.diffSelectionLabel}>
                         {formatFileSelectionLabel(
-                          selectedFilePaths.size,
+                          selectedFilePathsRef.current.size,
                           diffPatchData.allFilePaths.length,
                         )}
                       </span>
@@ -558,7 +554,7 @@ export function PromptCopyDialog({
                         onClick={() => {
                           if (isActiveDiffBlock) {
                             const diffContentForBlock = buildClipboardPayload({
-                              selectedFiles: selectedFilePaths,
+                              selectedFiles: selectedFilePathsRef.current,
                               allFiles: diffPatchData.allFilePaths,
                               patches: diffPatchData.patches,
                             });
@@ -666,9 +662,21 @@ export function PromptCopyDialog({
           files={Object.values(diffPatchData.patches)}
           defaultChecked={true}
           onConfirm={(newSelectedPaths) => {
-            setSelectedFilePaths(newSelectedPaths);
-            setHasPickedFiles(true); // ADDED: Indicate picker has been used
+            selectedFilePathsRef.current = newSelectedPaths;
+            // Force re-render to update UI with new file selection
             setFileDiffPickerOpen(false);
+            // Use a dummy state update to force re-render if needed
+            // (since selectedFilePathsRef is a ref, not state)
+            // We'll use setDiffPatchData to a new object to force re-render
+            setDiffPatchData((prev) =>
+              prev
+                ? {
+                    ...prev,
+                    // This is a no-op, but will force a re-render
+                    patches: prev.patches,
+                  }
+                : prev,
+            );
           }}
           onCancel={() => setFileDiffPickerOpen(false)}
           title={`Choose files for: ${prTitle || diffPatchData.sourceBlockId}`}

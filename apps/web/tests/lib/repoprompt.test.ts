@@ -1,24 +1,42 @@
 /// <reference types="vitest/globals" />
 
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 import type { PullRequestCommit } from "../../src/lib/github/client";
 import type { PromptMode } from "../../src/lib/repoprompt"; // SUT type
 
-// Get actuals for setting up the mock. These are from the original, unmocked module.
-// This MUST be `await` and at the top level.
-const actualTemplatesModule = await vi.importActual<typeof import("../../src/lib/templates")>("../../src/lib/templates");
-const originalTemplateMapDeepCopy = JSON.parse(JSON.stringify(actualTemplatesModule.templateMap));
-const actualAnalyseTemplateFn = actualTemplatesModule.analyseTemplate;
+// Declare variables that will be initialized in beforeAll
+let originalTemplateMapDeepCopy: any;
+let actualAnalyseTemplateFn: any;
+const mutableMockedTemplateMap: any = {}; // Initialize as an empty object
 
-// This is the state that our mock will expose and our tests will manipulate.
-// Initialize it with a deep copy of the original.
-// This object itself will be mutated by tests.
-const mutableMockedTemplateMap = JSON.parse(JSON.stringify(originalTemplateMapDeepCopy));
+beforeAll(async () => {
+  const actualTemplatesModule = await vi.importActual<
+    typeof import("../../src/lib/templates")
+  >("../../src/lib/templates");
+  originalTemplateMapDeepCopy = JSON.parse(
+    JSON.stringify(actualTemplatesModule.templateMap),
+  );
+  actualAnalyseTemplateFn = actualTemplatesModule.analyseTemplate;
+
+  // Populate mutableMockedTemplateMap after actuals are loaded
+  const initialCopy = JSON.parse(JSON.stringify(originalTemplateMapDeepCopy));
+  for (const key in initialCopy) {
+    mutableMockedTemplateMap[key] = initialCopy[key];
+  }
+});
 
 vi.mock("../../src/lib/templates", () => ({
   __esModule: true,
   templateMap: mutableMockedTemplateMap, // Expose the mutable state
-  analyseTemplate: actualAnalyseTemplateFn, // Expose the original analyseTemplate
+  analyseTemplate: (...args: any[]) => actualAnalyseTemplateFn(...args), // Use a wrapper to call the fn
 }));
 
 // Now, other imports that might depend on the mocked "../../src/lib/templates" can follow
@@ -36,12 +54,11 @@ import { isDiffBlock } from "../../src/lib/repoprompt.guards";
 import * as settings from "../../src/lib/settings";
 import { mockPull } from "../testing";
 
-
 // Local helper to modify the mock's state
 function setMockTemplateBody(mode: PromptMode, body: string) {
   mutableMockedTemplateMap[mode] = {
     body,
-    meta: actualAnalyseTemplateFn(body), // Use the captured actualAnalyseTemplateFn
+    meta: actualAnalyseTemplateFn(body), // Ensure actualAnalyseTemplateFn is defined and called
   };
 }
 
@@ -194,7 +211,7 @@ describe("buildRepoPromptText", () => {
     // Setup default templates for this suite using the local setMockTemplateBody
     const defaultTemplateBodyForMode = (mode: PromptMode) =>
       `MODE ${mode.toUpperCase()} TEMPLATE:\nSETUP:\n{{SETUP}}\nPR_DETAILS:\n{{PR_DETAILS}}\nFILES_LIST:\n{{FILES_LIST}}\nDIFF_CONTENT:\n{{DIFF_CONTENT}}\nLINK:\n{{LINK}}`;
-    
+
     setMockTemplateBody("implement", defaultTemplateBodyForMode("implement"));
     setMockTemplateBody("review", defaultTemplateBodyForMode("review"));
     setMockTemplateBody("adjust-pr", defaultTemplateBodyForMode("adjust-pr"));
@@ -413,7 +430,7 @@ More PR body text.`;
           // So, this spy is the most direct way to control what template string buildRepoPromptText receives.
           setMockTemplateBody(defaultPromptMode, specificTemplateForTest); // Ensure the mock map reflects this too for consistency if accessed.
           return Promise.resolve(specificTemplateForTest);
-        }
+        },
       );
     });
 
@@ -529,7 +546,10 @@ More PR body text.`;
         `{{SETUP}}\nPR_INFO:\n{{PR_DETAILS}}\nFILES_EXPLICIT:\n{{FILES_LIST}}\nDIFFS:\n{{DIFF_CONTENT}}\n{{LINK}}`,
       );
       // Additionally, ensure the shared mock reflects this if any code path accesses templateMap directly for this mode.
-      setMockTemplateBody(defaultPromptMode, `{{SETUP}}\nPR_INFO:\n{{PR_DETAILS}}\nFILES_EXPLICIT:\n{{FILES_LIST}}\nDIFFS:\n{{DIFF_CONTENT}}\n{{LINK}}`);
+      setMockTemplateBody(
+        defaultPromptMode,
+        `{{SETUP}}\nPR_INFO:\n{{PR_DETAILS}}\nFILES_EXPLICIT:\n{{FILES_LIST}}\nDIFFS:\n{{DIFF_CONTENT}}\n{{LINK}}`,
+      );
 
       const pullWithBodyList = mockPull({
         body: prBodyWithFilesList,

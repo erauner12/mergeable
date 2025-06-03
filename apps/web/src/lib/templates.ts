@@ -9,7 +9,6 @@ import reviewTemplate from "../prompt-templates/review.md?raw";
 
 export interface TemplateMeta {
   expectsFilesList: boolean;
-  expectsDiffContent: boolean;
   expectsSetup: boolean;
   expectsLink: boolean;
   expectsPrDetails: boolean;
@@ -19,7 +18,6 @@ export interface TemplateMeta {
 export function analyseTemplate(tpl: string): TemplateMeta {
   return {
     expectsFilesList: tpl.includes("{{FILES_LIST}}"),
-    expectsDiffContent: tpl.includes("{{DIFF_CONTENT}}"),
     expectsSetup: tpl.includes("{{SETUP}}"),
     expectsLink: tpl.includes("{{LINK}}"),
     expectsPrDetails: tpl.includes("{{PR_DETAILS}}"),

@@ -180,13 +180,6 @@ export function formatPromptBlock(block: PromptBlock): string {
   return ""; // Should not happen
 }
 
-function formatListOfPromptBlocks(blocks: PromptBlock[]): string {
-  if (blocks.length === 0) {
-    return "";
-  }
-  return blocks.map(formatPromptBlock).join("\n").trimEnd();
-}
-
 /**
  * Builds a RepoPrompt URL for a given pull request and launch mode.
  * This function no longer includes the prompt in the URL.
@@ -316,12 +309,10 @@ export async function buildRepoPromptText(
   // Ensure to use pushUnique when adding to allPromptBlocks to prevent duplicates if an ID is accidentally processed multiple times.
   // `initiallySelectedBlocks` will be used to determine content for PR_DETAILS and DIFF_CONTENT slots
   const initiallySelectedBlocks: PromptBlock[] = [];
+  const embeddedDiffStrings: string[] = []; // NEW: To collect diff content
 
   // --- Determine PR Body and Files List ---
   const originalPrBody = pull.body?.trim() || "_No description provided._";
-
-  // Calculate template and determine if FILES_LIST should be populated
-  // const { body: mainTemplateString, meta: tplMeta } = templateMap[mode]; // OLD
 
   let mainTemplateString: string;
   let tplMeta: templates.TemplateMeta;
@@ -340,44 +331,6 @@ export async function buildRepoPromptText(
     tplMeta = defaultTemplate.meta;
   }
   // mainTemplateString and tplMeta are now set based on user settings or fallback.
-
-  // Pre-calculate whether we'll have diff content based on options
-  const willHaveDiffContentBasedOnOptions =
-    diffOptions.includePr ||
-    diffOptions.includeLastCommit ||
-    (diffOptions.commits && diffOptions.commits.length > 0);
-
-  let filesListString = "";
-  let finalPrBodyForBlock = originalPrBody;
-
-  // Populate FILES_LIST slot if template expects it, files exist, and no primary diff content is being generated
-  const shouldPopulateFilesListSlot =
-    tplMeta.expectsFilesList &&
-    meta.files &&
-    meta.files.length > 0 &&
-    !willHaveDiffContentBasedOnOptions;
-
-  if (shouldPopulateFilesListSlot) {
-    const { clean } = stripFilesListSection(originalPrBody);
-    finalPrBodyForBlock = clean;
-    const filesListContent = meta.files.map((f) => `- ${f}`).join("\n");
-    filesListString = `### files changed (${meta.files.length})\n${filesListContent}`;
-  }
-  // If not populating filesListSlot, finalPrBodyForBlock remains originalPrBody,
-  // and filesListString remains empty.
-
-  // 0. PR Details Block (always first, always initially selected)
-  const prDetailsBlock: CommentBlockInput = {
-    id: `pr-details-${pull.id}`,
-    kind: "comment",
-    header: `### PR #${pull.number} DETAILS: ${pull.title}`,
-    commentBody: finalPrBodyForBlock, // Use the determined body
-    author: pull.author?.name ?? "unknown",
-    authorAvatarUrl: pull.author?.avatarUrl,
-    timestamp: pull.createdAt,
-  };
-  pushUnique(allPromptBlocks, prDetailsBlock, (b) => b.id);
-  pushUnique(initiallySelectedBlocks, prDetailsBlock, (b) => b.id);
 
   // --- Block Fetching Logic (1. Comments, 2. Full PR Diff, 3. Last Commit Diff, 4. Specific Commits Diffs) ---
   // This logic remains largely the same, pushing to `allPromptBlocks` and `initiallySelectedBlocks`
@@ -424,7 +377,8 @@ export async function buildRepoPromptText(
         patch: prDiff,
       };
       pushUnique(allPromptBlocks, block, (b) => b.id);
-      pushUnique(initiallySelectedBlocks, block, (b) => b.id);
+      // pushUnique(initiallySelectedBlocks, block, (b) => b.id); // REMOVED
+      embeddedDiffStrings.push(formatPromptBlock(block)); // NEW
     }
   }
 
@@ -460,7 +414,8 @@ export async function buildRepoPromptText(
             patch: lastCommitDiff,
           };
           pushUnique(allPromptBlocks, block, (b) => b.id);
-          pushUnique(initiallySelectedBlocks, block, (b) => b.id);
+          // pushUnique(initiallySelectedBlocks, block, (b) => b.id); // REMOVED
+          embeddedDiffStrings.push(formatPromptBlock(block)); // NEW
         }
       }
     }
@@ -501,11 +456,50 @@ export async function buildRepoPromptText(
           patch: commitDiff,
         };
         pushUnique(allPromptBlocks, block, (b) => b.id);
-        pushUnique(initiallySelectedBlocks, block, (b) => b.id);
+        // pushUnique(initiallySelectedBlocks, block, (b) => b.id); // REMOVED
+        embeddedDiffStrings.push(formatPromptBlock(block)); // NEW
       }
     }
   }
   // --- End of Block Fetching Logic ---
+
+  let filesListString = "";
+  let finalPrBodyForBlock = originalPrBody;
+
+  // Populate FILES_LIST slot if template expects it, files exist, and no primary diff content is being generated
+  const hasEmbeddedDiff = embeddedDiffStrings.length > 0; // NEW: Check based on actual diffs collected
+  const shouldPopulateFilesListSlot =
+    tplMeta.expectsFilesList &&
+    meta.files &&
+    meta.files.length > 0 &&
+    !hasEmbeddedDiff; // UPDATED: Use hasEmbeddedDiff
+
+  if (shouldPopulateFilesListSlot) {
+    const { clean } = stripFilesListSection(originalPrBody);
+    finalPrBodyForBlock = clean;
+    const filesListContent = meta.files.map((f) => `- ${f}`).join("\n");
+    filesListString = `### files changed (${meta.files.length})\n${filesListContent}`;
+  }
+  // If not populating filesListSlot, finalPrBodyForBlock remains originalPrBody,
+  // and filesListString remains empty.
+
+  // 0. PR Details Block (always first, always initially selected)
+  let prDetailsCommentBody = finalPrBodyForBlock;
+  if (hasEmbeddedDiff) {
+    prDetailsCommentBody += "\n\n" + embeddedDiffStrings.join("\n\n"); // NEW: Append diffs
+  }
+
+  const prDetailsBlock: CommentBlockInput = {
+    id: `pr-details-${pull.id}`,
+    kind: "comment",
+    header: `### PR #${pull.number} DETAILS: ${pull.title}`,
+    commentBody: prDetailsCommentBody, // Use the (potentially) augmented body
+    author: pull.author?.name ?? "unknown",
+    authorAvatarUrl: pull.author?.avatarUrl,
+    timestamp: pull.createdAt,
+  };
+  pushUnique(allPromptBlocks, prDetailsBlock, (b) => b.id);
+  pushUnique(initiallySelectedBlocks, prDetailsBlock, (b) => b.id);
 
   // Prepare content for template slots
   const setupString = [
@@ -516,10 +510,10 @@ export async function buildRepoPromptText(
 
   const prDetailsString = formatPromptBlock(prDetailsBlock);
 
-  const otherSelectedBlocks = initiallySelectedBlocks.filter(
-    (block) => block.id !== prDetailsBlock.id,
-  );
-  const diffContentString = formatListOfPromptBlocks(otherSelectedBlocks);
+  // const otherSelectedBlocks = initiallySelectedBlocks.filter( // REMOVED
+  //   (block) => block.id !== prDetailsBlock.id,
+  // );
+  // const diffContentString = formatListOfPromptBlocks(otherSelectedBlocks); // REMOVED
 
   const linkString = `🔗 ${pull.url.includes("/pull/") ? pull.url : `https://github.com/${owner}/${repo}/pull/${pull.number}`}`;
 
@@ -533,7 +527,7 @@ export async function buildRepoPromptText(
     SETUP: setupString,
     PR_DETAILS: prDetailsString, // {{PR_DETAILS}} always gets the full PR details string
     FILES_LIST: filesListString,
-    DIFF_CONTENT: diffContentString,
+    // DIFF_CONTENT: diffContentString, // REMOVED
     LINK: linkString,
     prDetailsBlock: prDetailsContentForBlockToken, // {{prDetailsBlock}} is an alternative, gets content if {{PR_DETAILS}} is absent
   };
@@ -542,6 +536,7 @@ export async function buildRepoPromptText(
   const isStandardTemplate =
     tplMeta.expectsSetup &&
     (tplMeta.expectsPrDetails || tplMeta.expectsPrDetailsBlock) &&
+    // tplMeta.expectsDiffContent && // This part of the condition is removed as expectsDiffContent is removed
     tplMeta.expectsLink;
 
   let promptText: string;
@@ -565,7 +560,7 @@ export async function buildRepoPromptText(
       PR_DETAILS: prDetailsString,
       prDetailsBlock: prDetailsContentForBlockToken,
       FILES_LIST: filesListString,
-      DIFF_CONTENT: diffContentString,
+      // DIFF_CONTENT: diffContentString, // REMOVED
       // Any other custom tokens the user might have in their fragment would pass through,
       // and if not matched by renderTemplate's cleanup, would remain.
       // Or, if they are on their own line, renderTemplate cleans them.

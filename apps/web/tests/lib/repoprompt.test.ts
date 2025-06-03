@@ -17,6 +17,15 @@ let originalTemplateMapDeepCopy: any;
 let actualAnalyseTemplateFn: any;
 const mutableMockedTemplateMap: any = {}; // Initialize as an empty object
 
+// Move the vi.mock for templates to the very top, before any imports that might transitively import it
+vi.mock("../../src/lib/templates", () => ({
+  __esModule: true,
+  get templateMap() {
+    return mutableMockedTemplateMap;
+  },
+  analyseTemplate: (...args: any[]) => actualAnalyseTemplateFn(...args),
+}));
+
 beforeAll(async () => {
   const actualTemplatesModule = await vi.importActual<
     typeof import("../../src/lib/templates")
@@ -32,12 +41,6 @@ beforeAll(async () => {
     mutableMockedTemplateMap[key] = initialCopy[key];
   }
 });
-
-vi.mock("../../src/lib/templates", () => ({
-  __esModule: true,
-  templateMap: mutableMockedTemplateMap, // Expose the mutable state
-  analyseTemplate: (...args: any[]) => actualAnalyseTemplateFn(...args), // Use a wrapper to call the fn
-}));
 
 // Now, other imports that might depend on the mocked "../../src/lib/templates" can follow
 import * as gh from "../../src/lib/github/client"; // ← stub network call
@@ -415,19 +418,10 @@ More PR body text.`;
     beforeEach(() => {
       // Reset getPromptTemplateSpy to a generic template for these specific tests
       // to control presence of {{FILES_LIST}} token.
-      // This spy on settings.getPromptTemplate is separate from the templates.templateMap mock.
-      // If the SUT (buildRepoPromptText) calls settings.getPromptTemplate, this spy will intercept.
-      // The shared mock for templates.templateMap is used when settings.getPromptTemplate falls back to defaults.
       vi.spyOn(settings, "getPromptTemplate").mockImplementation(
         (_mode: PromptMode) => {
           // For these tests, we want buildRepoPromptText to receive a specific template string.
-          // This string will be analyzed by the *actual* analyseTemplate via the mocked templates.templateMap
-          // if getPromptTemplate internally uses it, OR if buildRepoPromptText gets it directly.
-          // The key is that the template string used by buildRepoPromptText should be this one.
           const specificTemplateForTest = `{{SETUP}}\n{{PR_DETAILS}}\n{{FILES_LIST}}\n{{DIFF_CONTENT}}\n{{LINK}}`;
-          // To ensure buildRepoPromptText uses this, we can also use setMockTemplateBody.
-          // However, buildRepoPromptText calls settings.getPromptTemplate(mode).
-          // So, this spy is the most direct way to control what template string buildRepoPromptText receives.
           setMockTemplateBody(defaultPromptMode, specificTemplateForTest); // Ensure the mock map reflects this too for consistency if accessed.
           return Promise.resolve(specificTemplateForTest);
         },

@@ -11,6 +11,7 @@ import { renderTemplate } from "./renderTemplate";
 import * as settings from "./settings";
 import type { TemplateMeta } from "./templates";
 import * as templates from "./templates";
+import { joinBlocks } from "./utils/promptFormat"; // ADDED IMPORT
 import { stripFilesListSection } from "./utils/stripFilesList"; // ADDED
 
 /**
@@ -248,11 +249,12 @@ export async function buildRepoPromptText(
   // Implementation begins
   let mainTemplateString: string;
   let tplMeta: TemplateMeta;
-  const userTemplateString: string | undefined = await settings.getPromptTemplate(mode); // Fetch user template
+  const userTemplateString: string | undefined =
+    await settings.getPromptTemplate(mode); // Fetch user template
   const allPromptBlocks: PromptBlock[] = [];
   // const initiallySelectedBlocks: PromptBlock[] = []; // This seems unused now for promptText construction
   const embeddedDiffStrings: string[] = [];
-  
+
   // Strip "files changed" section from PR body before using it.
   const originalPrBody = stripFilesListSection(pull.body ?? "");
 
@@ -262,7 +264,10 @@ export async function buildRepoPromptText(
   // Template selection and validation
   // If userTemplateString is the same as the default, analyseTemplate will be called on the default.
   // This is fine. The key is that we get a template string and its meta.
-  if (userTemplateString && userTemplateString !== templates.templateMap[mode].body) {
+  if (
+    userTemplateString &&
+    userTemplateString !== templates.templateMap[mode].body
+  ) {
     mainTemplateString = userTemplateString;
     tplMeta = templates.analyseTemplate(userTemplateString);
   } else {
@@ -413,10 +418,10 @@ export async function buildRepoPromptText(
     filesListString = "No files changed in this PR.";
   }
 
-
   // PR Details Block (content for PR_DETAILS slot, but no longer added to allPromptBlocks)
   const prDetailsCommentBody = originalPrBody; // Already stripped
-  const prDetailsBlockForSlotFormatting: CommentBlockInput = { // Renamed to clarify its purpose
+  const prDetailsBlockForSlotFormatting: CommentBlockInput = {
+    // Renamed to clarify its purpose
     id: `pr-details-${pull.id}`, // ID is still useful for potential direct formatting if needed elsewhere
     kind: "comment",
     header: `PR #${pull.number} DETAILS: ${pull.title}`,
@@ -436,9 +441,9 @@ export async function buildRepoPromptText(
   ].join("\n");
 
   const prDetailsString = formatPromptBlock(prDetailsBlockForSlotFormatting); // Format for slot insertion
-  const diffContentString = embeddedDiffStrings.join("\n\n").trim();
+  const diffContentString = joinBlocks(embeddedDiffStrings).trim();
   const linkString = `🔗 ${pull.url.includes("/pull/") ? pull.url : `https://github.com/${owner}/${repo}/pull/${pull.number}`}`;
-  
+
   // This logic correctly handles providing content for {{prDetailsBlock}}
   // only if the template expects it AND NOT {{PR_DETAILS}}.
   const prDetailsContentForBlockToken = tplMeta.expectsPrDetails
@@ -459,13 +464,12 @@ export async function buildRepoPromptText(
   // The removeMarker option for FILES_LIST is no longer needed as the marker is removed from templates.
   const promptText = renderTemplate(mainTemplateString, allSlots);
 
-
   // --- ensure deterministic order for the `blocks` array returned to UI: PR first, then other comments, then diffs
   const uniqueAllPromptBlocks = Array.from(
     new Map(allPromptBlocks.map((b) => [b.id, b])).values(),
   ).sort((a, b) => {
     // PR-details blocks are no longer present; just sort comments before diffs
-    const rank = (x: PromptBlock) => x.kind === "comment" ? 1 : 2;
+    const rank = (x: PromptBlock) => (x.kind === "comment" ? 1 : 2);
     return rank(a) - rank(b);
   });
 

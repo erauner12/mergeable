@@ -24,7 +24,7 @@ import {
 } from "../lib/github/diffUtils";
 import type { PromptBlock } from "../lib/repoprompt";
 import { formatPromptBlock } from "../lib/repoprompt";
-// import { stripFilesListSection } from "../lib/utils/stripFilesList"; // NEW // REMOVE THIS LINE
+import { joinBlocks } from "../lib/utils/promptFormat"; // ADDED IMPORT
 import { FileDiffPicker } from "./FileDiffPicker";
 import styles from "./PromptCopyDialog.module.scss";
 
@@ -273,7 +273,7 @@ export function PromptCopyDialog({
   };
 
   const currentSelectedText = useMemo(() => {
-    const result = blocks
+    const resultParts = blocks
       .filter((block) => selectedIds.has(block.id))
       .map((block) => {
         if (
@@ -299,8 +299,8 @@ export function PromptCopyDialog({
           JSON.stringify(formatted),
         );
         return formatted;
-      })
-      .join("\n\n"); // <-- MODIFIED: Use double newline for separation
+      });
+    const result = joinBlocks(resultParts);
     console.log(
       "DEBUG currentSelectedText: final result =",
       JSON.stringify(result),
@@ -319,17 +319,16 @@ export function PromptCopyDialog({
         injectSelectionIntoTemplate(template, selectionClean);
       if (injected) {
         // Injected selected content into the template
-        return [injectedTemplate, extra].filter(Boolean).join("\n\n").trimEnd();
+        return joinBlocks([injectedTemplate, extra].filter(Boolean)).trimEnd();
       } else {
         // Fallback: template first, then selected content, then extra text
-        return [template, selectionClean, extra]
-          .filter(Boolean)
-          .join("\n\n")
-          .trimEnd();
+        return joinBlocks(
+          [template, selectionClean, extra].filter(Boolean),
+        ).trimEnd();
       }
     } else {
       // No selected blocks, just template and extra text
-      return [template, extra].filter(Boolean).join("\n\n").trimEnd();
+      return joinBlocks([template, extra].filter(Boolean)).trimEnd();
     }
   };
 

@@ -31,6 +31,8 @@ A standard template **must include all** of the following tokens, typically with
     *   **Content**: A direct link to the pull request on the SCM platform (e.g., GitHub).
     *   **Heading**: No specific heading is required by the system for this token, but it's often placed at the end.
 
+**Note on Block Separation**: Blocks of content generated to fill these tokens (e.g., multiple diffs within `{{DIFF_CONTENT}}`, or when combining multiple selected items in the UI) are typically separated by a double newline. This standard separator is defined as `SECTION_SEPARATOR` in `apps/web/src/lib/utils/promptFormat.ts`. While `renderTemplate.ts` includes logic to normalize excessive newlines, custom templates or manual prompt construction should ideally respect this convention for clarity and consistency.
+
 ### Standard Template Skeleton Example:
 
 All built-in templates follow this general structure. Custom templates should also adhere to it.

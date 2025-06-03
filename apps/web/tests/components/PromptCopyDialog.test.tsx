@@ -435,17 +435,92 @@ describe("PromptCopyDialog with FileDiffPicker integration", () => {
     });
     expect(mockOnClose).toHaveBeenCalledTimes(1);
 
-    rerender(
+    // Re-render as closed (simulating parent component behavior)
+    // This part of the test was to simulate the parent component unmounting/remounting the dialog.
+    // However, the key reset logic happens on isOpen prop change and useEffects within PromptCopyDialog.
+    // The immediate rerender to open=true is more direct for testing re-initialization.
+    await act(async () => {
+      rerender(
+        <PromptCopyDialog
+          isOpen={false} // Now closed
+          initialPromptText={MOCK_INITIAL_PROMPT_TEXT_WITH_PR_DETAILS}
+          blocks={MOCK_BLOCKS_WITH_DIFF_NO_PR_DETAILS}
+          onClose={mockOnClose}
+        />,
+      );
+    });
+    // Reopen
+    await act(async () => {
+      rerender(
+        <PromptCopyDialog
+          isOpen={true}
+          initialPromptText={MOCK_INITIAL_PROMPT_TEXT_WITH_PR_DETAILS}
+          blocks={MOCK_BLOCKS_WITH_DIFF_NO_PR_DETAILS}
+          onClose={mockOnClose}
+        />,
+      );
+    });
+    // Should re-initialize to all files selected for the label
+    expect(screen.getByText("(All 2 files)")).toBeInTheDocument();
+    // And content should be raw patch again (hasPickedFiles is false)
+    const diffBlockDivReopened = screen
+      .getByText("### PR Diff")
+      .closest('div[class*="promptBlock"]');
+    await waitFor(() => {
+      const preElement = diffBlockDivReopened!.querySelector("pre");
+      expect(normaliseWS(preElement!.textContent!)).toBe(
+        normaliseWS(SIMPLE_DIFF_PATCH),
+      );
+    });
+  });
+
+  test("Handles no diff block gracefully", async () => {
+    const blocksWithoutDiff: PromptBlock[] = [
+      {
+        id: "comment-only-1", // Specific ID
+        kind: "comment",
+        header: "### Comment Only",
+        commentBody: "No diff here.",
+        author: "user",
+        timestamp: new Date().toISOString(),
+      },
+    ];
+    render(
       <PromptCopyDialog
         isOpen={true}
-        initialPromptText={MOCK_INITIAL_PROMPT_TEXT_WITH_PR_DETAILS}
-        blocks={MOCK_BLOCKS_WITH_DIFF_NO_PR_DETAILS}
-        onClose={mockOnClose}
+        initialPromptText={MOCK_INITIAL_PROMPT_TEXT_WITH_PR_DETAILS} // Still provide initial prompt
+        blocks={blocksWithoutDiff}
+        onClose={() => {}}
       />,
     );
+    expect(screen.queryByText("Choose files…")).not.toBeInTheDocument();
+    expect(screen.queryByText("(All 0 files)")).not.toBeInTheDocument(); // Or similar label
+    // FileDiffPicker should not be rendered or attempted to be used
+    expect(screen.queryByText("FileDiffPickerMock")).not.toBeInTheDocument();
+
+    // Copy selected should still work
+    await act(async () => {
+      fireEvent.click(screen.getByText("Copy Selected"));
+    });
+
+    const commentOnlyBlockFormatted = formatPromptBlock(
+      blocksWithoutDiff[0],
+    ).trimEnd();
+    const expectedCombined = `${commentOnlyBlockFormatted}\n\n${MOCK_INITIAL_PROMPT_TEXT_WITH_PR_DETAILS}`;
+
+    expect(mockCopyToClipboard).toHaveBeenCalledWith(expectedCombined);
   });
-  // Should re-initialize to all files selected for the label
-  expect(screen.getByText("(All 2 files)")).toBeInTheDocument();
+});
+
+// ADD NEW TEST SUITE BELOW
+
+describe("PromptCopyDialog with initialPromptText", () => {
+  let originalClipboard: typeof navigator.clipboard;
+  let originalExecCommand: (
+    commandId: string,
+    showUI?: boolean,
+    value?: string,
+  ) => boolean;
 
   beforeEach(() => {
     vi.clearAllMocks(); // Clear mocks, including mockCopyToClipboard

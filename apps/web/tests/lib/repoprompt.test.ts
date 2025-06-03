@@ -111,6 +111,7 @@ describe("buildRepoPromptUrl", () => {
   });
 });
 
+/* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-assignment */
 describe("buildRepoPromptText", () => {
   const mockResolvedMetaBase: ResolvedPullMeta = {
     owner: "owner",
@@ -330,8 +331,6 @@ describe("buildRepoPromptText", () => {
     expect(promptText).toContain(`LINK:\n${expectedLink}`);
     expect(promptText).not.toContain("{{DIFF_CONTENT}}"); // As it's empty and renderTemplate cleans it up
     // Check that empty DIFFS section is removed by renderTemplate
-    const diffsSectionIndex = promptText.indexOf("DIFFS:\n");
-    const linkSectionIndex = promptText.indexOf("\nLINK:");
     // If DIFFS section is present and empty, it would be "DIFFS:\n\nLINK:" or similar
     // We expect "FILES:\n...\n\nLINK:"
     expect(promptText).not.toMatch(/DIFFS:\s*\n\s*LINK:/);
@@ -1200,19 +1199,19 @@ describe("buildRepoPromptText", () => {
     vi.spyOn(gh, "getPullRequestDiff").mockResolvedValue("full pr diff content");
     vi.spyOn(gh, "listPrCommits").mockImplementation(async (_owner, _repo, _pullNumber, perPage) => {
       if (perPage === 1) { // For last commit
-        return [{ sha: "lastsha", commit: { message: "Last commit" } } as PullRequestCommit];
+        return Promise.resolve([{ sha: "lastsha", commit: { message: "Last commit" } } as PullRequestCommit]);
       }
       // For specific commits (or general listing if used)
-      return [
+      return Promise.resolve([
         { sha: "specsha1", commit: { message: "Specific commit ONE" } },
         { sha: "specsha2", commit: { message: "Specific commit TWO" } },
-      ] as PullRequestCommit[];
+      ] as PullRequestCommit[]);
     });
     vi.spyOn(gh, "getCommitDiff").mockImplementation(async (_owner, _repo, sha) => {
-      if (sha === "lastsha") return "diff for last commit";
-      if (sha === "specsha1") return "diff for specsha1";
-      if (sha === "specsha2") return "diff for specsha2";
-      return `diff for ${sha}`;
+      if (sha === "lastsha") return Promise.resolve("diff for last commit");
+      if (sha === "specsha1") return Promise.resolve("diff for specsha1");
+      if (sha === "specsha2") return Promise.resolve("diff for specsha2");
+      return Promise.resolve(`diff for ${sha}`);
     });
 
 

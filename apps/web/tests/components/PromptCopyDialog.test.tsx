@@ -242,41 +242,35 @@ describe("PromptCopyDialog with FileDiffPicker integration", () => {
     );
 
     const copiedText = mockCopyToClipboard.mock.calls[0][0];
-    // MODIFIED: Use formatPromptBlock for comment block expectations
     const generalCommentBlock = MOCK_BLOCKS_WITH_DIFF_NO_PR_DETAILS.find(
-      (b) => b.id === "comment-1", // Use updated ID
+      (b) => b.id === "comment-1",
     )!;
     const anotherCommentBlock = MOCK_BLOCKS_WITH_DIFF_NO_PR_DETAILS.find(
-      (b) => b.id === "comment-2", // Use updated ID
+      (b) => b.id === "comment-2",
     )!;
-
-    // The selected blocks' content (comments + processed diff) should appear first
-    expect(copiedText).toContain(
-      formatPromptBlock(generalCommentBlock).trimEnd(),
-    );
-    // The diff block's content will be the result of buildClipboardPayload (raw diff).
-    // We check that buildClipboardPayloadSpy was called with correct selected files.
-    // The raw diff content itself will be part of copiedText.
-    // For example, if file1.txt was selected, its diff content should be in copiedText.
     const allPatchesData =
       DiffUtils.splitUnifiedDiff(SIMPLE_DIFF_PATCH);
     const expectedDiffContentForFile1 =
       allPatchesData["file1.txt"].patch.trim();
-    expect(copiedText).toContain(expectedDiffContentForFile1);
 
-    expect(copiedText).toContain(
+    // --- build the string that _should_ replace the placeholder -------------
+    const selectionInjected = [
+      formatPromptBlock(generalCommentBlock).trimEnd(),
+      expectedDiffContentForFile1,
       formatPromptBlock(anotherCommentBlock).trimEnd(),
-    );
-    // The diff block's content will be the result of buildClipboardPayload
-    // We don't check its exact content here, just that the spy was called.
+    ].join("\n\n");
 
-    // Then the initialPromptText (which contains PR details from template) should follow
-    expect(copiedText).toContain(MOCK_INITIAL_PROMPT_TEXT_WITH_PR_DETAILS);
+    // --- expected final prompt ---------------------------------------------
+    const EXPECTED_PROMPT = MOCK_INITIAL_PROMPT_TEXT_WITH_PR_DETAILS.replace(
+      "(diff content here, possibly empty if not selected for template)",
+      selectionInjected,
+    ).trimEnd();
 
-    // Ensure PR details are not duplicated (they should only come from initialPromptText)
-    const prDetailsHeaderCount = (copiedText.match(/### PR details/g) ?? [])
-      .length;
-    expect(prDetailsHeaderCount).toBe(1);
+    // --- assertions ---------------------------------------------------------
+    expect(normaliseWS(copiedText)).toBe(normaliseWS(EXPECTED_PROMPT));
+
+    // PR-details header must still be unique
+    expect((copiedText.match(/### PR details/g) ?? []).length).toBe(1);
 
     buildClipboardPayloadSpy.mockRestore();
   });

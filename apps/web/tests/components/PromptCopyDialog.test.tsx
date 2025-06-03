@@ -4,6 +4,7 @@ import { afterEach, beforeEach, expect, test, vi, describe } from "vitest";
 import { PromptCopyDialog } from "../../src/components/PromptCopyDialog";
 import * as DiffUtils from "../../src/lib/github/diffUtils"; // To mock buildClipboardPayload
 import type { PromptBlock } from "../../src/lib/repoprompt";
+import { normaliseWS } from "../testingUtils"; // ADDED IMPORT
 
 // Mock FileDiffPicker to control its behavior
 vi.mock("../../src/components/FileDiffPicker", () => ({
@@ -283,7 +284,7 @@ describe("PromptCopyDialog with FileDiffPicker integration", () => {
     // Initial Render: Should display raw patch content
     await waitFor(() => {
       const preElement = diffBlockDiv!.querySelector("pre");
-      expect(preElement).toHaveTextContent(SIMPLE_DIFF_PATCH.trim()); // Check against raw patch
+      expect(normaliseWS(preElement!.textContent!)).toBe(normaliseWS(SIMPLE_DIFF_PATCH)); // Check against raw patch
     });
 
     fireEvent.click(screen.getByTestId("choose-files-diff-1")); // Use data-testid
@@ -367,7 +368,7 @@ describe("PromptCopyDialog with FileDiffPicker integration", () => {
     const diffBlockDivReopened = screen.getByText("### PR Diff").closest('div[class*="promptBlock"]');
     await waitFor(() => {
         const preElement = diffBlockDivReopened!.querySelector("pre");
-        expect(preElement).toHaveTextContent(SIMPLE_DIFF_PATCH.trim());
+        expect(normaliseWS(preElement!.textContent!)).toBe(normaliseWS(SIMPLE_DIFF_PATCH));
     });
   });
 

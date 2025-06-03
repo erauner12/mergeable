@@ -8,6 +8,7 @@ import {
 } from "./github/client";
 import type { Pull } from "./github/types";
 import { getDefaultRoot, getPromptTemplate } from "./settings"; // Added getPromptTemplate
+import { renderTemplate } from "./renderTemplate"; // ADDED: Import renderTemplate
 
 /**
  * Functions for building RepoPrompt URLs and prompt text.
@@ -286,19 +287,17 @@ export async function buildRepoPromptText(
 // --------------------------------------------------------------------------------
 export async function buildRepoPromptText(
   pull: PullWithBranch,
-  diffOptionsArg?: DiffOptions, // Renamed to avoid conflict in argument juggling
-  // `modeOrEndpoint` can be either `PromptMode` or the old 3rd-argument `Endpoint`
+  diffOptionsArg?: DiffOptions,
   modeOrEndpoint?: PromptMode | Endpoint,
   endpointOrMeta?: Endpoint | ResolvedPullMeta,
   maybeMeta?: ResolvedPullMeta,
 ): Promise<{ promptText: string; blocks: PromptBlock[] }> {
-  // --- argument juggling -------------------------------------------------------
+  // --- argument juggling (no changes) ---
   let mode: PromptMode = defaultPromptMode;
   let endpoint: Endpoint | undefined;
   let meta: ResolvedPullMeta | undefined;
   const diffOptions: DiffOptions = diffOptionsArg || {};
 
-  // Guard-rail: if both full PR and last commit diffs are requested, drop last commit.
   if (diffOptions.includePr && diffOptions.includeLastCommit) {
     diffOptions.includeLastCommit = false;
   }
@@ -310,32 +309,26 @@ export async function buildRepoPromptText(
       modeOrEndpoint === "adjust-pr" ||
       modeOrEndpoint === "respond")
   ) {
-    // New signature in use: buildRepoPromptText(pull, diffOptions, mode, endpoint, meta)
     mode = modeOrEndpoint as PromptMode;
     endpoint = endpointOrMeta as Endpoint | undefined;
     meta = maybeMeta;
   } else {
-    // Legacy 4-arg signature: buildRepoPromptText(pull, diffOptions, endpoint, meta)
-    // mode remains defaultPromptMode
     endpoint = modeOrEndpoint;
     meta = endpointOrMeta as ResolvedPullMeta | undefined;
   }
 
   if (!meta) {
-    // This case should ideally be handled by callers ensuring meta is provided,
-    // or by resolving it here if necessary, though the current structure implies meta is pre-resolved.
-    // For now, to prevent runtime errors if meta is undefined from legacy calls, we throw.
-    // A more robust solution might involve calling buildRepoPromptUrl internally if meta is missing.
     throw new Error(
       "ResolvedPullMeta (meta) is required for buildRepoPromptText. Legacy callers might need updating or meta resolution logic here.",
     );
   }
 
-  const { owner, repo, branch, rootPath } = meta; // files are also in meta
+  const { owner, repo, branch, rootPath } = meta;
   const token = endpoint?.auth;
 
   const allPromptBlocks: PromptBlock[] = [];
-  const initiallySelectedBlocks: PromptBlock[] = []; // For generating the initial promptText
+  // `initiallySelectedBlocks` will be used to determine content for PR_DETAILS and DIFF_CONTENT slots
+  const initiallySelectedBlocks: PromptBlock[] = [];
 
   // 0. PR Details Block (always first, always initially selected)
   const placeholderDescription = "_No description provided._";
@@ -349,7 +342,7 @@ export async function buildRepoPromptText(
     id: `pr-details-${pull.id}`,
     kind: "comment",
     header: `### PR #${pull.number} DETAILS: ${pull.title}`,
-    commentBody: prBodyForBlock, // Use the processed body
+    commentBody: prBodyForBlock,
     author: pull.author?.name ?? "unknown",
     authorAvatarUrl: pull.author?.avatarUrl,
     timestamp: pull.createdAt,
@@ -357,23 +350,23 @@ export async function buildRepoPromptText(
   pushUnique(allPromptBlocks, prDetailsBlock, b => b.id);
   pushUnique(initiallySelectedBlocks, prDetailsBlock, b => b.id);
 
+  // --- Block Fetching Logic (1. Comments, 2. Full PR Diff, 3. Last Commit Diff, 4. Specific Commits Diffs) ---
+  // This logic remains largely the same, pushing to `allPromptBlocks` and `initiallySelectedBlocks`
+  // ... (existing block fetching logic here, ensuring `initiallySelectedBlocks` is populated correctly) ...
   // 1. Comments, Reviews, Threads (if requested)
   if (diffOptions.includeComments) {
     if (endpoint) {
-      // fetchPullComments requires an endpoint
-      const commentBlocks = await fetchPullComments(
-        endpoint,
-        owner,
-        repo,
-        pull.number,
-      );
-      commentBlocks.forEach(block => pushUnique(allPromptBlocks, block, b => b.id));
-      // Comment blocks are NOT initially selected by default for the promptText,
-      // especially for "adjust-pr" mode.
-      if (mode !== "adjust-pr") {
-        // Potentially select them for other modes if desired in future,
-        // for now, comments are generally not part of the initial prompt text.
-      }
+      const commentBlocks = await fetchPullComments(endpoint, owner, repo, pull.number);
+      commentBlocks.forEach(block => {
+        pushUnique(allPromptBlocks, block, b => b.id);
+        // Decide if comments go into initiallySelectedBlocks based on mode
+        if (mode !== "adjust-pr") { // Example: comments not initially selected for adjust-pr
+            // Potentially add to initiallySelectedBlocks for other modes if desired
+            // For now, let's assume they are generally *not* part of DIFF_CONTENT by default
+            // but are available in `allPromptBlocks` for the UI to pick.
+            // If they *should* be in DIFF_CONTENT, push them to initiallySelectedBlocks here.
+        }
+      });
     } else {
       console.warn("Cannot fetch comments: endpoint is undefined.");
     }
@@ -381,169 +374,73 @@ export async function buildRepoPromptText(
 
   // 2. Full PR Diff
   if (diffOptions.includePr) {
-    const prDiff = await getPullRequestDiff(
-      owner,
-      repo,
-      pull.number,
-      token,
-      endpoint?.baseUrl, // Pass baseUrl
-    );
+    const prDiff = await getPullRequestDiff(owner, repo, pull.number, token, endpoint?.baseUrl);
     if (prDiff.trim()) {
-      const block: DiffBlockInput = {
-        id: `diff-pr-${pull.id}`,
-        kind: "diff",
-        header: "### FULL PR DIFF",
-        patch: prDiff,
-      };
+      const block: DiffBlockInput = { id: `diff-pr-${pull.id}`, kind: "diff", header: "### FULL PR DIFF", patch: prDiff };
       pushUnique(allPromptBlocks, block, b => b.id);
-      // For "adjust-pr" mode, only include if explicitly picked (which diffOptions.includePr signifies)
-      // For other modes, include if diffOptions.includePr is true.
       pushUnique(initiallySelectedBlocks, block, b => b.id);
     }
   }
 
   // 3. Last Commit Diff
   if (diffOptions.includeLastCommit) {
-    const prCommits = await listPrCommits(
-      owner,
-      repo,
-      pull.number,
-      1,
-      token,
-      endpoint?.baseUrl, // Pass baseUrl
-    );
+    const prCommits = await listPrCommits(owner, repo, pull.number, 1, token, endpoint?.baseUrl);
     if (prCommits.length > 0) {
       const lastCommit = prCommits[0];
       if (lastCommit && lastCommit.sha) {
-        const lastCommitDiff = await getCommitDiff(
-          owner,
-          repo,
-          lastCommit.sha,
-          token,
-          endpoint?.baseUrl, // Pass baseUrl
-        );
+        const lastCommitDiff = await getCommitDiff(owner, repo, lastCommit.sha, token, endpoint?.baseUrl);
         if (lastCommitDiff.trim()) {
           const shortSha = lastCommit.sha.slice(0, 7);
-          const commitTitle = (
-            lastCommit.commit.message || "No commit message"
-          ).split("\n")[0];
-          const block: DiffBlockInput = {
-            id: `diff-last-commit-${lastCommit.sha}`,
-            kind: "diff",
-            header: `### LAST COMMIT (${shortSha} — "${commitTitle}")`,
-            patch: lastCommitDiff,
-          };
+          const commitTitle = (lastCommit.commit.message || "No commit message").split("\n")[0];
+          const block: DiffBlockInput = { id: `diff-last-commit-${lastCommit.sha}`, kind: "diff", header: `### LAST COMMIT (${shortSha} — "${commitTitle}")`, patch: lastCommitDiff };
           pushUnique(allPromptBlocks, block, b => b.id);
-          // For "adjust-pr" mode, only include if explicitly picked (diffOptions.includeLastCommit)
-          // For other modes, include if diffOptions.includeLastCommit is true.
           pushUnique(initiallySelectedBlocks, block, b => b.id);
         }
-      } else {
-        console.warn(
-          `Could not get SHA for the last commit of PR #${pull.number}`,
-        );
       }
-    } else {
-      console.warn(`PR #${pull.number} has no commits for 'last commit' diff.`);
     }
   }
 
   // 4. Specific Commits Diffs
   if (diffOptions.commits && diffOptions.commits.length > 0) {
-    const allPrCommitsForMessages = await listPrCommits(
-      owner,
-      repo,
-      pull.number,
-      250, // Default limit for fetching commit messages
-      token,
-      endpoint?.baseUrl, // Pass baseUrl
-    );
-    const commitMessageMap = new Map(
-      allPrCommitsForMessages.map((c) => [
-        c.sha,
-        (c.commit.message || "No commit message").split("\n")[0],
-      ]),
-    );
-
+    const allPrCommitsForMessages = await listPrCommits(owner, repo, pull.number, 250, token, endpoint?.baseUrl);
+    const commitMessageMap = new Map(allPrCommitsForMessages.map((c) => [c.sha, (c.commit.message || "No commit message").split("\n")[0]]));
     for (const sha of diffOptions.commits) {
-      const commitDiff = await getCommitDiff(
-        owner,
-        repo,
-        sha,
-        token,
-        endpoint?.baseUrl, // Pass baseUrl
-      );
+      const commitDiff = await getCommitDiff(owner, repo, sha, token, endpoint?.baseUrl);
       if (commitDiff.trim()) {
         const shortSha = sha.slice(0, 7);
-        const commitTitle =
-          commitMessageMap.get(sha) || "Unknown commit message";
-        const block: DiffBlockInput = {
-          id: `diff-commit-${sha}`,
-          kind: "diff",
-          header: `### COMMIT (${shortSha} — "${commitTitle}")`,
-          patch: commitDiff,
-        };
+        const commitTitle = commitMessageMap.get(sha) || "Unknown commit message";
+        const block: DiffBlockInput = { id: `diff-commit-${sha}`, kind: "diff", header: `### COMMIT (${shortSha} — "${commitTitle}")`, patch: commitDiff };
         pushUnique(allPromptBlocks, block, b => b.id);
-        // For "adjust-pr" mode, only include if explicitly picked (diffOptions.commits.length > 0)
-        // For other modes, include if diffOptions.commits.length > 0.
-        pushUnique(initiallySelectedBlocks, block, b => b.id); // Assuming specific commits are also initially selected if requested
+        pushUnique(initiallySelectedBlocks, block, b => b.id);
       }
     }
   }
+  // --- End of Block Fetching Logic ---
 
-  // Filter initiallySelectedBlocks for "adjust-pr" mode to ensure only PR details and explicitly selected diffs are included.
-  // Comment blocks are already excluded from initiallySelectedBlocks by default.
-  // Diff blocks are included if their respective diffOption was true.
-  // For "adjust-pr", we want PR details, and diffs *if their options were true*.
-  // The current logic for pushing to initiallySelectedBlocks already respects diffOptions.
-  // The main change for "adjust-pr" is that its base prompt will guide it to focus on title/body.
 
-  const combinedInitialContent = formatListOfPromptBlocks(
-    initiallySelectedBlocks,
-  );
-
-  // Ensure getPromptTemplate is awaited
-  const basePrompt = await getPromptTemplate(mode);
-  // Removed the try-catch block that was handling Promise<string>
-
-  const PR_DETAILS_TOKEN = "{{prDetailsBlock}}";
-  const setupBlock = [
-    "## SETUP",
-    "```bash",
-    `cd ${rootPath}`, // Correctly from meta
+  // Prepare content for template slots
+  const setupString = [
+    `cd ${rootPath}`,
     "git fetch origin",
-    `git checkout ${branch}`, // Correctly from meta
-    "```",
+    `git checkout ${branch}`,
   ].join("\n");
 
-  const linkBlock = `🔗 ${pull.url.includes("/pull/") ? pull.url : `https://github.com/${owner}/${repo}/pull/${pull.number}`}`;
-  const trimmedCombinedInitialContent = combinedInitialContent.trim();
+  const prDetailsString = formatPromptBlock(prDetailsBlock);
 
-  let mainContentParts: string[];
+  const otherSelectedBlocks = initiallySelectedBlocks.filter(block => block.id !== prDetailsBlock.id);
+  const diffContentString = formatListOfPromptBlocks(otherSelectedBlocks);
+  
+  const linkString = `🔗 ${pull.url.includes("/pull/") ? pull.url : `https://github.com/${owner}/${repo}/pull/${pull.number}`}`;
 
-  if (basePrompt.includes(PR_DETAILS_TOKEN)) {
-    // If token exists, basePrompt is the main structure.
-    // Replace token with content. If content is empty, token is removed.
-    const contentWithTokenReplaced = basePrompt.replace(PR_DETAILS_TOKEN, trimmedCombinedInitialContent);
-    mainContentParts = [setupBlock, contentWithTokenReplaced, linkBlock];
-  } else {
-    // No token, traditional append.
-    // basePrompt is one part, trimmedCombinedInitialContent (if any) is another.
-    if (trimmedCombinedInitialContent) {
-      mainContentParts = [setupBlock, basePrompt, trimmedCombinedInitialContent, linkBlock];
-    } else {
-      mainContentParts = [setupBlock, basePrompt, linkBlock];
-    }
-  }
+  const mainTemplateString = await getPromptTemplate(mode);
+  
+  const promptText = renderTemplate(mainTemplateString, {
+    SETUP: setupString,
+    PR_DETAILS: prDetailsString,
+    DIFF_CONTENT: diffContentString,
+    LINK: linkString,
+  });
 
-  // Join the main parts with double newlines, filter out empty/null/whitespace-only parts.
-  const promptText = mainContentParts
-    .filter(part => part && part.trim() !== "")
-    .join("\n\n")
-    .trim();
-
-
-  // Deduplicate allPromptBlocks by id, keeping the last occurrence.
   const uniqueAllPromptBlocks = Array.from(
     new Map(allPromptBlocks.map(b => [b.id, b])).values()
   );

@@ -1,5 +1,6 @@
 import { db } from "./db"; // Assumed import for Dexie instance
 import type { PromptMode } from "./repoprompt"; // Import PromptMode
+import { templateMap } from "./templates"; // ADDED: Import templateMap
 
 export interface SettingsEntry<T = unknown> {
   key: string;
@@ -33,56 +34,68 @@ export async function setDefaultRoot(rootPath: string): Promise<void> {
 export const keyFor = (mode: PromptMode): string =>
   `basePromptTemplate:${mode}`;
 
-// Default prompt texts for different modes
-const defaultPromptTemplates: Record<PromptMode, string> = {
-  implement:
-    "### TASK\nReview the following pull-request diff and propose improvements.",
-  review:
-    "### TASK\nYou are reviewing the following pull-request diff and associated comments. Please provide constructive feedback, identify potential issues, and suggest improvements. Focus on clarity, correctness, performance, and adherence to coding standards.",
-  "adjust-pr":
-    "### TASK\nThe PR title and/or body may be stale or incomplete. Based on the provided context (PR details, diffs), draft an improved PR title and body. The title should be concise and follow conventional commit guidelines if applicable. The body should clearly explain the purpose of the changes, how they were implemented, and any relevant context for reviewers.",
-  respond:
-    "### TASK\nDraft a reply to the following comment thread(s). Address the questions or concerns raised, provide clarifications, or discuss the proposed changes. Be clear, concise, and constructive.",
-};
+// REMOVED: Default prompt texts for different modes (defaultPromptTemplates object)
+// These defaults now live in the .md files and are accessed via templateMap.
 
 export async function getBasePrompt(): Promise<string> {
-  const row = await db.settings.get("basePromptTemplate"); // This is legacy, effectively for "implement"
-  return row?.value ?? defaultPromptTemplates.implement;
+  // This function is legacy and primarily for "implement" mode's old key.
+  // It should return the task-specific part of the implement prompt if found,
+  // or the default task-specific part from templateMap.implement.
+  // However, the new system expects getPromptTemplate to return the full template.
+  // For now, let's have it return the content of templateMap.implement if no legacy DB entry.
+  const row = await db.settings.get("basePromptTemplate");
+  if (row?.value !== undefined) return row.value as string;
+  
+  // Extracting the "TASK" part from templateMap.implement is complex here.
+  // The refactor implies this function might become less relevant or change its meaning.
+  // For now, returning the full implement template from map if legacy not found.
+  // This might need adjustment based on how legacy fallback is truly handled.
+  // The user's proposal for getPromptTemplate("implement") handles the fallback chain.
+  // This function (getBasePrompt) is mostly for testing the legacy key.
+  // Let's assume it should return the content of the legacy key or the default "implement" *task*.
+  // Since defaultPromptTemplates is removed, we refer to templateMap.implement.
+  // This is tricky because templateMap.implement is the *full structure*.
+  // For the purpose of testing legacy `setBasePrompt`, we'll keep it simple.
+  // The actual default for "implement" mode's content is now within templateMap.implement.
+  return row?.value ?? templateMap.implement; // Fallback to full implement template for now.
 }
 
 export async function setBasePrompt(text: string): Promise<void> {
+  // This sets the legacy key, which is an override for the "implement" mode template.
   await db.settings.put({
-    key: "basePromptTemplate", // This is legacy, effectively for "implement"
+    key: "basePromptTemplate",
     value: text,
   } as SettingsEntry<string>);
 }
 
 export async function getPromptTemplate(mode: PromptMode): Promise<string> {
+  // 1. Try the new key first
+  const newKeyRow = await db.settings.get(keyFor(mode));
+  if (newKeyRow?.value !== undefined) return newKeyRow.value as string;
+
+  // 2. For "implement" mode, try the legacy key if new key not found
   if (mode === "implement") {
-    // For "implement", try the new key first, then fall back to the legacy key, then to default.
-    const newKeyRow = await db.settings.get(keyFor("implement"));
-    if (newKeyRow?.value !== undefined) return newKeyRow.value;
-    return getBasePrompt(); // Fallback to legacy or its default
+    const legacyKeyRow = await db.settings.get("basePromptTemplate");
+    if (legacyKeyRow?.value !== undefined) return legacyKeyRow.value as string;
   }
-  const row = await db.settings.get(keyFor(mode));
-  return (row?.value as string) ?? defaultPromptTemplates[mode];
+  
+  // 3. Fallback to the default template from the loaded .md file
+  return templateMap[mode];
 }
 
 export async function setPromptTemplate(
   mode: PromptMode,
   text: string,
 ): Promise<void> {
-  if (mode === "implement") {
-    /* Keep **both** keys in sync – tests rely on this during the transition period. */
-    await db.settings.put(
-      { key: keyFor("implement"), value: text } as SettingsEntry<string>,
-    );
-    await db.settings.put(
-      { key: "basePromptTemplate", value: text } as SettingsEntry<string>,
-    );
-    return; // early-return so we don't fall through to the generic write below
-  }
+  // Save to the new key
   await db.settings.put(
     { key: keyFor(mode), value: text } as SettingsEntry<string>,
   );
+
+  // If "implement" mode, also update the legacy key for synchronization
+  if (mode === "implement") {
+    await db.settings.put(
+      { key: "basePromptTemplate", value: text } as SettingsEntry<string>,
+    );
+  }
 }

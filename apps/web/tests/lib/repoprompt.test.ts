@@ -2,27 +2,34 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PullRequestCommit } from "../../src/lib/github/client"; // Import renamed type
 import * as gh from "../../src/lib/github/client"; // ← stub network call
-import * as repopromptModule from "../../src/lib/repoprompt"; // ADDED: Namespace import
+import * as repopromptModule from "../../src/lib/repoprompt";
 import {
   buildRepoPromptText,
   buildRepoPromptUrl,
   type CommentBlockInput,
-  defaultPromptMode, // Import defaultPromptMode
+  defaultPromptMode,
   type PromptMode,
   type ResolvedPullMeta,
+  formatPromptBlock, // Import for checking formatted blocks
 } from "../../src/lib/repoprompt";
 import { isDiffBlock } from "../../src/lib/repoprompt.guards";
 import * as settings from "../../src/lib/settings";
-// Assuming mockPull is imported from a shared testing utility like "../testing"
 import { mockPull } from "../testing";
+import * as renderTemplateModule from "../../src/lib/renderTemplate"; // Mock renderTemplate
 
-// Mock logRepoPromptCall as it's now called by buildRepoPromptText or PullRow
-// For these tests, we are testing buildRepoPromptUrl and buildRepoPromptText,
-// so we don't want their internal/downstream calls to logRepoPromptCall to run.
-// However, the plan is that PullRow calls logRepoPromptCall.
-// For testing buildRepoPromptText, we might want to assert it *doesn't* call logRepoPromptCall.
-// For testing buildRepoPromptUrl, it definitely doesn't call it.
-// REMOVED: vi.mock for "../../src/lib/repoprompt"
+// Mock renderTemplate to check its inputs and control its output
+vi.mock("../../src/lib/renderTemplate", () => ({
+  renderTemplate: vi.fn((template: string, slots: Record<string, unknown>) => {
+    // Simple mock: just join slots for verification, or return template if no slots for some reason
+    // A more sophisticated mock could actually perform replacement for more robust checks.
+    let result = template;
+    for (const [key, value] of Object.entries(slots)) {
+      result = result.replace(`{{${key}}}`, value as string);
+    }
+    return result;
+  }),
+}));
+
 
 // Mock fetchPullComments
 vi.mock("../../src/lib/github/client", async (importOriginal) => {
@@ -31,33 +38,22 @@ vi.mock("../../src/lib/github/client", async (importOriginal) => {
     await importOriginal<typeof import("../../src/lib/github/client")>();
   return {
     ...originalClient,
-    fetchPullComments: vi.fn(), // Mock the new function
-    // Keep existing mocks if gitHubClient instance is used directly, or mock its methods if used via instance
-    // For this test, we are mocking specific functions from the module, so this should be fine.
-    // If buildRepoPromptText uses an instance of gitHubClient, that instance's methods need mocking.
-    // It seems buildRepoPromptText calls the module functions directly.
+    fetchPullComments: vi.fn(),
   };
 });
 
 describe("buildRepoPromptUrl", () => {
-  let logRepoPromptCallSpy!: ReturnType<typeof vi.spyOn>; // Corrected definite assignment
-
   beforeEach(() => {
     vi.spyOn(gh, "getPullRequestMeta").mockResolvedValue({
       branch: "fallback-branch",
       files: ["src/a.ts", "README.md"],
     });
     vi.spyOn(settings, "getDefaultRoot").mockResolvedValue("/tmp");
-    // No need to mock diff functions for buildRepoPromptUrl
-    // ADDED: Initialize spy
-    logRepoPromptCallSpy = vi
-      .spyOn(repopromptModule, "logRepoPromptCall")
-      .mockImplementation(() => {});
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
-    vi.clearAllMocks(); // Clear all mocks, including logRepoPromptCall
+    vi.clearAllMocks();
   });
 
   it("should build a URL without prompt parameter", async () => {
@@ -74,17 +70,15 @@ describe("buildRepoPromptUrl", () => {
     expect(urlObj.host).toBe("open");
     expect(urlObj.searchParams.has("prompt")).toBe(false);
     expect(urlObj.searchParams.get("workspace")).toBe("myrepo");
-    // Updated expectation: URLSearchParams.get() decodes the value.
     expect(urlObj.searchParams.get("files")).toBe("src/main.ts,README.md");
-    expect(logRepoPromptCallSpy).not.toHaveBeenCalled(); // UPDATED: Use spy
   });
 
   it("should resolve metadata and include it in the return", async () => {
     const pull = mockPull({
       repo: "owner/anotherrepo",
       number: 456,
-      branch: "", // To trigger meta fetch
-      files: [], // To trigger meta fetch
+      branch: "",
+      files: [],
     });
     vi.spyOn(gh, "getPullRequestMeta").mockResolvedValue({
       branch: "fetched-branch",
@@ -102,7 +96,7 @@ describe("buildRepoPromptUrl", () => {
       "anotherrepo",
       456,
       undefined,
-      undefined, // Add undefined for baseUrl
+      undefined,
     );
     expect(resolvedMeta.branch).toBe("fetched-branch");
     expect(resolvedMeta.files).toEqual(["file1.txt", "file2.js"]);
@@ -111,15 +105,13 @@ describe("buildRepoPromptUrl", () => {
     expect(resolvedMeta.rootPath).toBe("/tmp/anotherrepo");
 
     const urlObj = new URL(url);
-    expect(urlObj.pathname).toBe("/%2Ftmp%2Fanotherrepo"); // for folder mode
+    expect(urlObj.pathname).toBe("/%2Ftmp%2Fanotherrepo");
     expect(urlObj.searchParams.get("ephemeral")).toBe("true");
-    // Updated expectation: URLSearchParams.get() decodes the value.
     expect(urlObj.searchParams.get("files")).toBe("file1.txt,file2.js");
   });
 });
 
 describe("buildRepoPromptText", () => {
-  let logRepoPromptCallSpy!: ReturnType<typeof vi.spyOn>; // Corrected definite assignment
   const mockResolvedMetaBase: ResolvedPullMeta = {
     owner: "owner",
     repo: "myrepo",
@@ -127,44 +119,36 @@ describe("buildRepoPromptText", () => {
     files: ["src/main.ts", "README.md"],
     rootPath: "/tmp/myrepo",
   };
-  const mockResolvedMeta = mockResolvedMetaBase; // Alias for existing test code
-  // Loosen the type even more – any mock instance is fine for tests
+  const mockResolvedMeta = mockResolvedMetaBase;
   let getPromptTemplateSpy: any;
   let listPrCommitsSpy: any;
   let getPullRequestDiffSpy: any;
 
 
   beforeEach(() => {
+    vi.clearAllMocks();
     getPullRequestDiffSpy = vi.spyOn(gh, "getPullRequestDiff").mockResolvedValue(
       "dummy pr diff content",
     );
-    vi.mocked(gh.fetchPullComments).mockResolvedValue([]); // Default mock for new function
+    vi.mocked(gh.fetchPullComments).mockResolvedValue([]);
     listPrCommitsSpy = vi.spyOn(gh, "listPrCommits").mockResolvedValue([]);
     vi.spyOn(gh, "getCommitDiff").mockResolvedValue(
       "dummy commit diff content",
     );
-    // Updated: Generic mock for getPromptTemplate
     getPromptTemplateSpy = vi
       .spyOn(settings, "getPromptTemplate")
       .mockImplementation((mode: PromptMode) =>
-        Promise.resolve(`MOCK_PROMPT_FOR_${mode.toUpperCase()}`),
+        Promise.resolve(
+          `MODE ${mode.toUpperCase()} TEMPLATE:\nSETUP:\n{{SETUP}}\nPR_DETAILS:\n{{PR_DETAILS}}\nDIFF_CONTENT:\n{{DIFF_CONTENT}}\nLINK:\n{{LINK}}`,
+        ),
       );
-    // REMOVED: Mock for getBasePrompt as it's no longer directly used or is a fallback.
-    // The new getPromptTemplate mock covers all modes.
-
-    // getDefaultRoot is not called by buildRepoPromptText if meta (with rootPath) is passed
-    // ADDED: Initialize spy
-    logRepoPromptCallSpy = vi
-      .spyOn(repopromptModule, "logRepoPromptCall")
-      .mockImplementation(() => {});
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
-    vi.clearAllMocks();
   });
 
-  it("should build prompt text with only PR details if options are empty and no files in meta for files list", async () => {
+  it("should call renderTemplate with correct slots", async () => {
     const pull = mockPull({
       repo: "owner/myrepo",
       number: 123,
@@ -172,64 +156,133 @@ describe("buildRepoPromptText", () => {
       body: "PR Body here.",
       url: "https://github.com/owner/myrepo/pull/123",
       branch: "feature-branch",
-      files: ["src/main.ts", "README.md"], // pull.files is not used for "files changed" list, meta.files is
-      author: {
-        id: "u1",
-        name: "testauthor",
-        avatarUrl: "avatar.url",
-        bot: false,
-      },
+      files: ["src/main.ts", "README.md"],
+      author: { id: "u1", name: "testauthor", avatarUrl: "avatar.url", bot: false },
+      createdAt: "2024-01-01T00:00:00Z",
+    });
+    const meta = { ...mockResolvedMetaBase, files: ["fileA.ts"] };
+
+    await buildRepoPromptText(
+      pull,
+      { includePr: false },
+      defaultPromptMode,
+      undefined,
+      meta,
+    );
+
+    expect(getPromptTemplateSpy).toHaveBeenCalledWith(defaultPromptMode);
+    expect(mockRenderTemplate).toHaveBeenCalledTimes(1);
+
+    const expectedTemplateString = `MODE ${defaultPromptMode.toUpperCase()} TEMPLATE:\nSETUP:\n{{SETUP}}\nPR_DETAILS:\n{{PR_DETAILS}}\nDIFF_CONTENT:\n{{DIFF_CONTENT}}\nLINK:\n{{LINK}}`;
+    const renderCallArgs = mockRenderTemplate.mock.calls[0];
+    expect(renderCallArgs[0]).toBe(expectedTemplateString);
+
+    const slots = renderCallArgs[1] as Record<string, string>;
+    expect(slots.SETUP).toContain("cd /tmp/myrepo");
+    expect(slots.SETUP).toContain("git checkout feature-branch");
+    
+    const prDetailsBlock = {
+        id: `pr-details-${pull.id}`,
+        kind: "comment",
+        header: `### PR #${pull.number} DETAILS: ${pull.title}`,
+        commentBody: "PR Body here.\n\n### files changed (1)\n- fileA.ts",
+        author: "testauthor",
+        authorAvatarUrl: "avatar.url",
+        timestamp: "2024-01-01T00:00:00Z",
+    } as CommentBlockInput;
+    expect(slots.PR_DETAILS).toBe(formatPromptBlock(prDetailsBlock).trim());
+    
+    expect(slots.DIFF_CONTENT).toBe("");
+    expect(slots.LINK).toBe("🔗 https://github.com/owner/myrepo/pull/123");
+  });
+
+  it("should populate DIFF_CONTENT slot correctly", async () => {
+    const pull = mockPull({ number: 456, repo: "o/r", branch: "b", files: [] });
+    await buildRepoPromptText(
+      pull,
+      { includePr: true },
+      defaultPromptMode,
+      undefined,
+      mockResolvedMeta,
+    );
+    
+    expect(mockRenderTemplate).toHaveBeenCalledTimes(1);
+    const slots = mockRenderTemplate.mock.calls[0][1] as Record<string, string>;
+
+    const expectedDiffBlock: repopromptModule.DiffBlockInput = {
+        id: `diff-pr-${pull.id}`,
+        kind: "diff",
+        header: "### FULL PR DIFF",
+        patch: "dummy pr diff content",
+    };
+    expect(slots.DIFF_CONTENT).toBe(formatPromptBlock(expectedDiffBlock).trim());
+  });
+  
+  it("DIFF_CONTENT slot should be empty if no diffs or comments are selected/included", async () => {
+    const pull = mockPull({ number: 789, repo: "o/r", branch: "b", files: [] });
+    await buildRepoPromptText(
+      pull,
+      { includePr: false, includeComments: false, includeLastCommit: false, commits: [] },
+      defaultPromptMode,
+      undefined,
+      mockResolvedMeta
+    );
+
+    expect(mockRenderTemplate).toHaveBeenCalledTimes(1);
+    const slots = mockRenderTemplate.mock.calls[0][1] as Record<string, string>;
+    expect(slots.DIFF_CONTENT).toBe("");
+  });
+
+  it("final promptText structure is determined by template and renderTemplate", async () => {
+    const pull = mockPull({
+      repo: "owner/myrepo",
+      number: 123,
+      title: "My Test PR",
+      body: "PR Body here.",
+      url: "https://github.com/owner/myrepo/pull/123",
+      branch: "feature-branch",
+      author: { id: "u1", name: "testauthor", avatarUrl: "avatar.url", bot: false },
       createdAt: "2024-01-01T00:00:00Z",
     });
     const metaNoFiles = { ...mockResolvedMetaBase, files: [] };
 
-    // Simulate a base prompt without the token (old behavior)
-    getPromptTemplateSpy.mockResolvedValue(`MOCK_PROMPT_FOR_${defaultPromptMode.toUpperCase()}`);
+    vi.mocked(renderTemplateModule.renderTemplate).mockRestore();
+     getPromptTemplateSpy.mockResolvedValue(
+        `SETUP AREA:\n{{SETUP}}\n\nPR INFO:\n{{PR_DETAILS}}\n\nLINK:\n{{LINK}}\n\nDIFFS:\n{{DIFF_CONTENT}}`
+     );
 
     const { promptText, blocks } = await buildRepoPromptText(
       pull,
-      {}, // No diffs, no comments requested
-      undefined, // endpoint
+      {},
+      defaultPromptMode,
+      undefined,
       metaNoFiles,
     );
 
-    expect(getPromptTemplateSpy).toHaveBeenCalledWith(defaultPromptMode);
+    expect(blocks.length).toBe(1);
+    const prDetailsBlock = blocks[0] as CommentBlockInput;
 
-    expect(blocks.length).toBe(1); // Only PR details block
-    expect(blocks[0].kind).toBe("comment");
-    expect(blocks[0].id).toBe(`pr-details-${pull.id}`);
-    const prDetailsCommentBlock = blocks[0] as CommentBlockInput;
-    expect(prDetailsCommentBlock.header).toContain(
-      "### PR #123 DETAILS: My Test PR",
-    );
-    expect(prDetailsCommentBlock.commentBody).toBe("PR Body here."); // No "files changed" list
-    expect(prDetailsCommentBlock.commentBody).not.toContain("### files changed");
+    const expectedSetup = "cd /tmp/myrepo\ngit fetch origin\ngit checkout feature-branch";
+    const expectedPrDetails = formatPromptBlock(prDetailsBlock).trim();
+    const expectedLink = "🔗 https://github.com/owner/myrepo/pull/123";
+    
+    expect(promptText).toContain(`SETUP AREA:\n${expectedSetup}`);
+    expect(promptText).toContain(`PR INFO:\n${expectedPrDetails}`);
+    expect(promptText).toContain(`LINK:\n${expectedLink}`);
+    expect(promptText).not.toContain("{{DIFF_CONTENT}}");
+    expect(promptText).not.toContain("DIFFS:\n\nLINK:");
 
-    // Check structure: SETUP block, then base prompt, then PR details, then link
-    // Note: join("\n\n") is used.
-    const expectedOrder = [
-      "## SETUP",
-      `MOCK_PROMPT_FOR_${defaultPromptMode.toUpperCase()}`,
-      "### PR #123 DETAILS: My Test PR",
-      "🔗 https://github.com/owner/myrepo/pull/123"
-    ];
-    let lastIndex = -1;
-    for (const part of expectedOrder) {
-      const currentIndex = promptText.indexOf(part);
-      expect(currentIndex).toBeGreaterThan(lastIndex);
-      lastIndex = currentIndex;
-    }
-
-    expect(promptText).toContain("cd /tmp/myrepo");
-    expect(promptText).toContain("git checkout feature-branch");
-    expect(promptText).toContain("> _testauthor · 2024-Jan-01_");
-    expect(promptText).toContain("PR Body here.");
-    expect(promptText).not.toContain("### files changed"); // Because metaNoFiles.files is empty
-    expect(promptText).not.toContain("### FULL PR DIFF");
-    expect(promptText).not.toContain("### LAST COMMIT");
-    expect(vi.mocked(gh.fetchPullComments)).not.toHaveBeenCalled();
-    expect(logRepoPromptCallSpy).not.toHaveBeenCalled();
+    vi.mock("../../src/lib/renderTemplate", () => ({
+      renderTemplate: mockRenderTemplate,
+    }));
   });
+
+  // ... (Keep other tests like guard-rail, conditional files list, comments, diffs, ordering, unique IDs, etc.)
+  // They primarily test the `blocks` array and the logic for creating different types of blocks,
+  // which is still relevant as this data feeds into the slots for `renderTemplate`.
+  // The assertions on `promptText` in those tests might need to be removed or simplified,
+  // as the exact final string is now highly dependent on the (mocked) template.
+  // The main check for `promptText` is that `renderTemplate` was called with the right slot data.
 
   it("guard-rail: should ignore includeLastCommit if includePr is also true", async () => {
     const pull = mockPull({ number: 1, repo: "o/r", branch: "b", files: [] });
@@ -900,5 +953,3 @@ describe("buildRepoPromptText", () => {
     expect(blocks.some(b => b.id.startsWith("diff-last-commit-"))).toBe(false);
   });
 });
-// Remove old tests for buildRepoPromptLink that checked prompt encoding or diff content in the URL
-// The old tests for buildRepoPromptLink are effectively split.

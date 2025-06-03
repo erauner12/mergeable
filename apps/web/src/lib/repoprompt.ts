@@ -12,6 +12,7 @@ import { renderTemplate } from "./renderTemplate"; // ADDED: Import renderTempla
 // import { templateMap } from "./templates"; // Added templateMap import // OLD
 import * as settings from "./settings"; // ADD
 import * as templates from "./templates"; // ADD
+import type { TemplateMeta } from "./templates"; // ADD: Import TemplateMeta type
 
 /**
  * Functions for building RepoPrompt URLs and prompt text.
@@ -247,7 +248,7 @@ export async function buildRepoPromptText(
 
   // Implementation begins
   let mainTemplateString: string;
-  let tplMeta: any;
+  let tplMeta: TemplateMeta;
   const userTemplateString: string | undefined = undefined;
   const allPromptBlocks: PromptBlock[] = [];
   const initiallySelectedBlocks: PromptBlock[] = [];

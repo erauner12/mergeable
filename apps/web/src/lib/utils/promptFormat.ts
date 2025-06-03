@@ -9,8 +9,8 @@ export const SECTION_SEPARATOR = "\n\n";
  *
  * Behavior regarding whitespace:
  * 1. Parts that are empty or consist only of whitespace (e.g., `" "`, `"\\n\\n"`) are entirely dropped.
- *    This effectively collapses such "blank" parts, addressing how both leading and trailing
- *    blank lines within such parts lead to their removal.
+ *    This effectively collapses such "blank" parts. Note that because `trim()` is used to check for emptiness,
+ *    both leading and trailing blank lines *within* such parts contribute to them being considered "blank" and thus removed.
  * 2. For all other (non-blank) parts, trailing whitespace (including newlines) is removed
  *    (akin to `String.prototype.trimEnd()`). Leading whitespace within these parts is preserved.
  *

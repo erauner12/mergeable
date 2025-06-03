@@ -3,7 +3,7 @@ import { joinBlocks, SECTION_SEPARATOR } from "../../src/lib/utils/promptFormat"
 
 test("joinBlocks removes empties and uses canonical separator", () => {
   const out = joinBlocks(["A", "", "B\n", " ", "C"]);
-  expect(out).toBe(`A${SECTION_SEPARATOR}B\n${SECTION_SEPARATOR}C`);
+  expect(out).toBe(`A${SECTION_SEPARATOR}B${SECTION_SEPARATOR}C`);
 });
 
 test("joinBlocks handles all empty or whitespace strings correctly", () => {
@@ -22,5 +22,5 @@ test("joinBlocks with multiple elements", () => {
 });
 
 test("joinBlocks with elements containing newlines", () => {
-  expect(joinBlocks(["A\n", "\nB", "C"])).toBe(`A\n${SECTION_SEPARATOR}\nB${SECTION_SEPARATOR}C`);
+  expect(joinBlocks(["A\n", "\nB", "C"])).toBe(`A${SECTION_SEPARATOR}\nB${SECTION_SEPARATOR}C`);
 });

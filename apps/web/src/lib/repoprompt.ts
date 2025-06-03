@@ -11,8 +11,8 @@ import { renderTemplate } from "./renderTemplate"; // ADDED: Import renderTempla
 // import { getDefaultRoot } from "./settings"; // Removed getPromptTemplate // OLD
 // import { templateMap } from "./templates"; // Added templateMap import // OLD
 import * as settings from "./settings"; // ADD
-import * as templates from "./templates"; // ADD
 import type { TemplateMeta } from "./templates"; // ADD: Import TemplateMeta type
+import * as templates from "./templates"; // ADD
 
 /**
  * Functions for building RepoPrompt URLs and prompt text.
@@ -135,7 +135,7 @@ function formatDateUtcShort(ts: string): string {
 export function formatPromptBlock(block: PromptBlock): string {
   if (block.kind === "diff") {
     // keep the patch exactly as GitHub returned it
-    return `${block.header}\n\`\`\`diff\n${block.patch}\n\`\`\`\n`;
+    return `${block.header}\n\`\`\`diff\n${block.patch}\n\`\`\``;
   } else if (block.kind === "comment") {
     const parts: string[] = [];
     if (block.diffHunk) {

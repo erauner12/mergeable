@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { analyseTemplate, type TemplateMeta } from '../src/lib/templates'; // Adjust path as needed
+import { analyseTemplate, type TemplateMeta, isStandard, REQUIRED_SLOTS } from '../src/lib/templates'; // Adjust path as needed
 
 // Import raw template strings
 import adjustPrTemplate from '../src/prompt-templates/adjust-pr.md?raw';
@@ -27,31 +27,37 @@ console.log('Linting prompt templates...');
 for (const template of templates) {
   console.log(`\nLinting ${template.name}:`);
 
-  // Rule 1: Never include both {{PR_DETAILS}} and {{prDetailsBlock}}.
-  if (template.meta.expectsPrDetails && template.meta.expectsPrDetailsBlock) {
-    console.error(`🛑 ${template.name} includes both {{PR_DETAILS}} and {{prDetailsBlock}}. Choose exactly one.`);
-    hasErrors = true;
+  // Rule 1: Check overall standardness (includes PR details token logic and all other required tokens)
+  if (isStandard(template.meta)) {
+    console.log(`  ✅ Template conforms to the standard contract.`);
   } else {
-    console.log(`  ✅ PR details token usage is valid.`);
+    console.error(`🛑 ${template.name} does not conform to the standard template contract.`);
+    // Provide more specific feedback:
+    REQUIRED_SLOTS.forEach(slotKeyPartial => {
+      const slotKey = slotKeyPartial as keyof TemplateMeta; // e.g. "expectsSetup"
+      if (!template.meta[`expects${slotKeyPartial}` as keyof TemplateMeta]) {
+        console.error(`     Missing required token: {{${slotKeyPartial.replace(/([A-Z])/g, "_$1").toUpperCase().substring(1)}}} (expects${slotKeyPartial})`);
+      }
+    });
+    if (!template.meta.expectsPrDetails && !template.meta.expectsPrDetailsBlock) {
+      console.error(`     Missing PR details token: requires one of {{PR_DETAILS}} or {{prDetailsBlock}}.`);
+    }
+    if (template.meta.expectsPrDetails && template.meta.expectsPrDetailsBlock) {
+      console.error(`     Includes both {{PR_DETAILS}} and {{prDetailsBlock}}. Choose exactly one.`);
+    }
+    hasErrors = true;
   }
 
-  // Rule 2: {{FILES_LIST}} and {{DIFF_CONTENT}} exclusivity (with exception for respond.md)
-  // respond.md is allowed to have both because FILES_LIST is conditionally rendered.
-  if (template.name === 'respond.md') {
-    if (!template.meta.expectsFilesList || !template.meta.expectsDiffContent) {
-        console.warn(`  ⚠️ ${template.name} is expected to have both {{FILES_LIST}} and {{DIFF_CONTENT}}. Currently: FILES_LIST=${template.meta.expectsFilesList}, DIFF_CONTENT=${template.meta.expectsDiffContent}`);
-        // Not a hard error, but a warning if respond.md deviates from expectation.
-    } else {
-        console.log(`  ✅ ${template.name} specific token usage for FILES_LIST and DIFF_CONTENT is valid.`);
-    }
-  } else {
-    if (template.meta.expectsFilesList && template.meta.expectsDiffContent) {
-      console.error(`🛑 ${template.name} includes both {{FILES_LIST}} and {{DIFF_CONTENT}}. Choose exactly one, or use conditional rendering if appropriate (like respond.md).`);
-      hasErrors = true;
-    } else {
-      console.log(`  ✅ FILES_LIST/DIFF_CONTENT token usage is valid.`);
-    }
-  }
+  // Rule 2: (Old rule about FILES_LIST/DIFF_CONTENT exclusivity is removed as both are now required by isStandard)
+  // isStandard already checks for expectsFilesList and expectsDiffContent.
+  // No further specific checks needed here for those two unless there are mode-specific *additional* requirements.
+  // The prompt was: "respond.md is allowed to have both because FILES_LIST is conditionally rendered."
+  // This conditionality is gone. All templates must have both.
+
+  // Example of a mode-specific check (if any were needed beyond `isStandard`):
+  // if (template.name === 'respond.md') {
+  //   // any respond.md specific checks
+  // }
 }
 
 if (hasErrors) {

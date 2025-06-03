@@ -1,7 +1,5 @@
-export function renderTemplate(tpl: string, slots: Record<string, string>, opts?: { removeMarker?: string[] }): string {
+export function renderTemplate(tpl: string, slots: Record<string, string>): string {
   let out = tpl;
-  const filesListSlotValue = slots["FILES_LIST"] ?? "";
-  const filesListSlotIsEmpty = filesListSlotValue.trim() === "";
 
   for (const [key, val] of Object.entries(slots)) {
     // Ensure val is a string; if it's undefined or null, treat as empty string to avoid "undefined" in output.
@@ -10,14 +8,15 @@ export function renderTemplate(tpl: string, slots: Record<string, string>, opts?
   }
 
   // If FILES_LIST was empty, remove its conditional comment marker line
-  if (opts?.removeMarker?.includes('FILES_LIST') && filesListSlotIsEmpty) {
-    out = out.split('\n').map(line => {
-      if (line.trim() === "<!-- FILE_LIST_ONLY_IF_PRESENT -->") {
-        return ""; // Mark for removal, will be filtered out later
-      }
-      return line;
-    }).join('\n');
-  }
+  // THIS LOGIC IS REMOVED as FILES_LIST is always populated and marker is removed from templates.
+  // if (opts?.removeMarker?.includes('FILES_LIST') && filesListSlotIsEmpty) {
+  //   out = out.split('\n').map(line => {
+  //     if (line.trim() === "<!-- FILE_LIST_ONLY_IF_PRESENT -->") {
+  //       return ""; // Mark for removal, will be filtered out later
+  //     }
+  //     return line;
+  //   }).join('\n');
+  // }
 
   // Strip any line that still contains an unreplaced {{TOKEN}} or a token replaced with an empty string that might leave the token itself.
   // This regex handles lines that are entirely a token, or a token surrounded by whitespace.
@@ -26,7 +25,8 @@ export function renderTemplate(tpl: string, slots: Record<string, string>, opts?
   out = out.replace(/^\s*{{\s*\w+\s*}}\s*$/gm, ""); // Tightened regex
   
   // Remove lines that became empty or whitespace-only after token replacement
-  out = out.split('\n').filter(line => line.trim().length > 0).join('\n');
+  // Also removes lines that were marked for removal by the (now removed) marker logic.
+  out = out.split('\n').filter(line => line.trim().length > 0 || line === "").join('\n'); // Keep intentionally blank lines from template if any, filter truly empty/whitespace only from replacements
 
   // Normalize consecutive blank lines to a maximum of two
   out = out.replace(/\n{3,}/g, '\n\n');

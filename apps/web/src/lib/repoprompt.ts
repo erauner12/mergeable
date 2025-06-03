@@ -7,12 +7,11 @@ import {
   listPrCommits,
 } from "./github/client";
 import type { Pull } from "./github/types";
-import { renderTemplate } from "./renderTemplate"; // ADDED: Import renderTemplate
-// import { getDefaultRoot } from "./settings"; // Removed getPromptTemplate // OLD
-// import { templateMap } from "./templates"; // Added templateMap import // OLD
-import * as settings from "./settings"; // ADD
-import type { TemplateMeta } from "./templates"; // ADD: Import TemplateMeta type
-import * as templates from "./templates"; // ADD
+import { renderTemplate } from "./renderTemplate";
+import * as settings from "./settings";
+import type { TemplateMeta } from "./templates";
+import * as templates from "./templates";
+import { stripFilesListSection } from "./utils/stripFilesList"; // ADDED
 
 /**
  * Functions for building RepoPrompt URLs and prompt text.
@@ -249,17 +248,21 @@ export async function buildRepoPromptText(
   // Implementation begins
   let mainTemplateString: string;
   let tplMeta: TemplateMeta;
-  const userTemplateString: string | undefined = undefined;
+  const userTemplateString: string | undefined = await settings.getPromptTemplate(mode); // Fetch user template
   const allPromptBlocks: PromptBlock[] = [];
-  const initiallySelectedBlocks: PromptBlock[] = [];
+  // const initiallySelectedBlocks: PromptBlock[] = []; // This seems unused now for promptText construction
   const embeddedDiffStrings: string[] = [];
-  const originalPrBody = pull.body ?? "";
+  
+  // Strip "files changed" section from PR body before using it.
+  const originalPrBody = stripFilesListSection(pull.body ?? "");
 
   const { owner, repo, branch, rootPath } = meta;
   const token = endpoint?.auth;
 
-  // Template selection
-  if (userTemplateString !== undefined && userTemplateString !== null) {
+  // Template selection and validation
+  // If userTemplateString is the same as the default, analyseTemplate will be called on the default.
+  // This is fine. The key is that we get a template string and its meta.
+  if (userTemplateString && userTemplateString !== templates.templateMap[mode].body) {
     mainTemplateString = userTemplateString;
     tplMeta = templates.analyseTemplate(userTemplateString);
   } else {
@@ -269,6 +272,12 @@ export async function buildRepoPromptText(
     }
     mainTemplateString = defaultTemplate.body;
     tplMeta = defaultTemplate.meta;
+  }
+
+  if (!templates.isStandard(tplMeta)) {
+    throw new Error(
+      `Template for mode "${mode}" is not standard. All templates must include SETUP, LINK, FILES_LIST, DIFF_CONTENT, and one of PR_DETAILS or prDetailsBlock. Please check your custom template or the default template.`,
+    );
   }
 
   // --- Block Fetching Logic (1. Comments, 2. Full PR Diff, 3. Last Commit Diff, 4. Specific Commits Diffs) ---
@@ -283,11 +292,7 @@ export async function buildRepoPromptText(
       );
       commentBlocks.forEach((block) => {
         pushUnique(allPromptBlocks, block, (b) => b.id);
-        // Decide if comments go into initiallySelectedBlocks based on mode
-        if (mode !== "adjust-pr") {
-          // Example: comments not initially selected for adjust-pr
-          // Potentially add to initiallySelectedBlocks for other modes if desired
-        }
+        // Comments are not part of the initial prompt text by default, but collected in allPromptBlocks
       });
     } else {
       console.warn("Cannot fetch comments: endpoint is undefined.");
@@ -316,6 +321,10 @@ export async function buildRepoPromptText(
   }
 
   // 3. Last Commit Diff
+  // Note: The original code had a guard rail against including both last commit and full PR diff.
+  // The user's plan said: "Drop the "guard-rail" logic about includeLastCommit vs includePr – leave as-is since behaviour is already correct but update comments."
+  // The current code *does not* have an explicit guard rail preventing both from being added to `embeddedDiffStrings` if both options are true.
+  // This means if both `includePr` and `includeLastCommit` are true, `DIFF_CONTENT` will contain both. This seems acceptable.
   if (diffOptions.includeLastCommit) {
     const prCommits = await listPrCommits(
       owner,
@@ -359,7 +368,7 @@ export async function buildRepoPromptText(
       owner,
       repo,
       pull.number,
-      250,
+      250, // Max commits to fetch for messages
       token,
       endpoint?.baseUrl,
     );
@@ -393,28 +402,35 @@ export async function buildRepoPromptText(
     }
   }
 
-  // FILES_LIST slot
+  // FILES_LIST slot - always populated
   let filesListString = "";
-  const shouldPopulateFilesListSlot =
-    tplMeta.expectsFilesList && meta.files && meta.files.length > 0;
-  if (shouldPopulateFilesListSlot) {
+  if (meta.files && meta.files.length > 0) {
     const filesListContent = meta.files.map((f) => `- ${f}`).join("\n");
-    filesListString = `### files changed (${meta.files.length})\n${filesListContent}`;
+    // The template itself will contain "### files changed"
+    filesListString = filesListContent;
+  } else {
+    // The template itself will contain "### files changed"
+    filesListString = "No files changed in this PR.";
   }
 
-  // PR Details Block (always first, always initially selected)
-  const prDetailsCommentBody = originalPrBody;
+
+  // PR Details Block (always first in allPromptBlocks, content for PR_DETAILS slot)
+  const prDetailsCommentBody = originalPrBody; // Already stripped
   const prDetailsBlock: CommentBlockInput = {
     id: `pr-details-${pull.id}`,
     kind: "comment",
-    header: `### PR #${pull.number} DETAILS: ${pull.title}`,
+    // The header for this block is now part of the template via {{PR_DETAILS}}'s surrounding markdown
+    // However, formatPromptBlock expects a header. We can make it minimal or rely on template structure.
+    // For consistency with how formatPromptBlock works, let's keep a header here.
+    // The template will have its own "### PR details" header.
+    header: `PR #${pull.number} DETAILS: ${pull.title}`, // This header is for the block data structure
     commentBody: prDetailsCommentBody,
     author: pull.author?.name ?? "unknown",
     authorAvatarUrl: pull.author?.avatarUrl,
     timestamp: pull.createdAt,
   };
   pushUnique(allPromptBlocks, prDetailsBlock, (b) => b.id);
-  pushUnique(initiallySelectedBlocks, prDetailsBlock, (b) => b.id);
+  // pushUnique(initiallySelectedBlocks, prDetailsBlock, (b) => b.id); // Not used for promptText construction
 
   // Prepare content for template slots
   const setupString = [
@@ -423,74 +439,32 @@ export async function buildRepoPromptText(
     `git checkout ${branch}`,
   ].join("\n");
 
-  const prDetailsString = formatPromptBlock(prDetailsBlock);
+  const prDetailsString = formatPromptBlock(prDetailsBlock); // This will format the PR details with its own header
   const diffContentString = embeddedDiffStrings.join("\n\n").trim();
   const linkString = `🔗 ${pull.url.includes("/pull/") ? pull.url : `https://github.com/${owner}/${repo}/pull/${pull.number}`}`;
+  
+  // This logic correctly handles providing content for {{prDetailsBlock}}
+  // only if the template expects it AND NOT {{PR_DETAILS}}.
   const prDetailsContentForBlockToken = tplMeta.expectsPrDetails
     ? ""
     : prDetailsString;
 
   const allSlots = {
     SETUP: setupString,
-    PR_DETAILS: prDetailsString,
+    PR_DETAILS: prDetailsString, // Populated if template uses {{PR_DETAILS}}
     FILES_LIST: filesListString,
     DIFF_CONTENT: diffContentString,
     LINK: linkString,
-    prDetailsBlock: prDetailsContentForBlockToken,
+    prDetailsBlock: prDetailsContentForBlockToken, // Populated if template uses {{prDetailsBlock}} (and not PR_DETAILS)
   };
 
-  const isStandardTemplate =
-    tplMeta.expectsSetup &&
-    (tplMeta.expectsPrDetails || tplMeta.expectsPrDetailsBlock) &&
-    tplMeta.expectsDiffContent &&
-    tplMeta.expectsLink;
+  // Since we now only support standard templates, the logic simplifies.
+  // renderTemplate will clean up any unused tokens or empty lines.
+  // The removeMarker option for FILES_LIST is no longer needed as the marker is removed from templates.
+  const promptText = renderTemplate(mainTemplateString, allSlots);
 
-  let promptText: string;
-  if (isStandardTemplate) {
-    // For standard templates, render with all slots and use the result directly.
-    // renderTemplate will clean up any unused tokens or empty lines.
-    promptText = renderTemplate(mainTemplateString, allSlots, {
-      removeMarker: ["FILES_LIST"],
-    });
-  } else {
-    // For non-standard templates (fragments), build the prompt structurally.
-    const promptSections = [];
-    // Always include SETUP section header
-    promptSections.push(`## SETUP\n${setupString}`);
-    // Render the user's template fragment with content-specific slots.
-    // Exclude SETUP and LINK from this specific render pass, as they are added structurally.
-    const slotsForUserFragment = {
-      PR_DETAILS: prDetailsString,
-      prDetailsBlock: prDetailsContentForBlockToken,
-      FILES_LIST: filesListString,
-      DIFF_CONTENT: diffContentString,
-      // Any other custom tokens the user might have in their fragment would pass through,
-      // and if not matched by renderTemplate's cleanup, would remain.
-      // Or, if they are on their own line, renderTemplate cleans them.
-    };
-    const userFragmentRendered = renderTemplate(
-      mainTemplateString,
-      slotsForUserFragment,
-      { removeMarker: ["FILES_LIST"] },
-    );
-    promptSections.push(userFragmentRendered);
-    // Append PR details if the user's custom template fragment didn't explicitly include {{PR_DETAILS}} or {{prDetailsBlock}}
-    const userHandledPrDetails =
-      tplMeta.expectsPrDetails || tplMeta.expectsPrDetailsBlock;
-    if (!userHandledPrDetails) {
-      promptSections.push(prDetailsString);
-    }
-    // Append diff content if the template doesn't handle {{DIFF_CONTENT}} but diff content is available
-    const userHandledDiffContent = tplMeta.expectsDiffContent;
-    if (!userHandledDiffContent && diffContentString.trim()) {
-      promptSections.push(diffContentString);
-    }
-    // Always include LINK section
-    promptSections.push(linkString);
-    promptText = promptSections.join("\n\n");
-  }
 
-  // --- ensure deterministic order: PR first, then other comments, then diffs
+  // --- ensure deterministic order for the `blocks` array returned to UI: PR first, then other comments, then diffs
   const uniqueAllPromptBlocks = Array.from(
     new Map(allPromptBlocks.map((b) => [b.id, b])).values(),
   ).sort((a, b) => {

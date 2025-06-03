@@ -27,6 +27,33 @@ export function analyseTemplate(tpl: string): TemplateMeta {
   };
 }
 
+// Defines tokens that are strictly required in a standard template,
+// besides the PR_DETAILS/prDetailsBlock pair.
+export const REQUIRED_SLOTS = [
+  "Setup",
+  "Link",
+  "FilesList",
+  "DiffContent",
+] as const; // Use PascalCase to match TemplateMeta properties like 'expectsSetup'
+
+/**
+ * Checks if a template's metadata conforms to the standard template contract.
+ * A standard template must expect:
+ * - SETUP, LINK, FILES_LIST, DIFF_CONTENT
+ * - Exactly one of PR_DETAILS or prDetailsBlock
+ */
+export function isStandard(meta: TemplateMeta): boolean {
+  const hasAllRequiredSlots = REQUIRED_SLOTS.every(
+    (slot) => meta[`expects${slot}` as keyof TemplateMeta],
+  );
+  const hasOnePrDetailsToken =
+    (meta.expectsPrDetails && !meta.expectsPrDetailsBlock) ||
+    (!meta.expectsPrDetails && meta.expectsPrDetailsBlock);
+
+  return hasAllRequiredSlots && hasOnePrDetailsToken;
+}
+
+
 export const templateMap: Record<
   PromptMode,
   { body: string; meta: TemplateMeta }

@@ -2,29 +2,39 @@
 
 This directory contains the Markdown-based prompt templates used by the application. These templates are processed by `renderTemplate.ts` and populated with dynamic data by `repoprompt.ts`.
 
-## Standard Tokens
+## Standard Template Contract (Mandatory)
 
-The following tokens are typically available for use in your templates:
+All prompt templates, including any custom templates configured by users, **must** adhere to the "standard template" contract. Failure to do so will result in an error, and RepoPrompt will refuse to generate the prompt.
 
--   `{{SETUP}}`: Provides setup instructions, like `cd` into the repository and `git checkout` the relevant branch. This is usually placed at the beginning of the prompt, often within a ` ```bash ... ``` ` block.
--   `{{PR_DETAILS}}`: Contains the pull request title and body. This is the primary way to include PR information.
--   `{{FILES_LIST}}`: A list of files changed in the PR. This is typically populated if the full PR diff is not being included (e.g., when `includePr: false` in `DiffOptions`).
--   `{{DIFF_CONTENT}}`: The actual diff content, which could be the full PR diff, last commit diff, or specific commit diffs, depending on user selection. This is usually placed within a ` ```diff ... ``` ` block.
--   `{{LINK}}`: A direct link to the pull request on the SCM platform (e.g., GitHub).
+A standard template **must include all** of the following tokens, typically within their own markdown sections:
 
-## Alternative PR Details Token
+1.  `{{SETUP}}`:
+    *   **Content**: Provides setup instructions, like `cd` into the repository and `git checkout` the relevant branch.
+    *   **Heading**: The template must include its own heading for this section (e.g., `## SETUP`).
+    *   **Placement**: Usually at the beginning of the prompt, often within a ` ```bash ... ``` ` block.
 
--   `{{prDetailsBlock}}`: This is an alternative token for including PR details.
-    -   If your template includes `{{PR_DETAILS}}`, the `{{prDetailsBlock}}` token will be replaced with an empty string (and the line subsequently removed if it becomes empty). This prevents duplication of PR details.
-    -   If your template *does not* include `{{PR_DETAILS}}` but *does* include `{{prDetailsBlock}}`, then `{{prDetailsBlock}}` will be populated with the PR details.
-    -   **Recommendation**: Prefer `{{PR_DETAILS}}` for clarity. `{{prDetailsBlock}}` exists for specific layout needs or legacy reasons but offers no advantage over `{{PR_DETAILS}}` with the current rendering logic.
+2.  One of `{{PR_DETAILS}}` or `{{prDetailsBlock}}`:
+    *   **Content**: The pull request title and body (the body will have any "### files changed" section automatically stripped from it before being inserted).
+    *   **Requirement**: Exactly one of these tokens must be present. Using both or neither will cause an error.
+    *   **Recommendation**: Prefer `{{PR_DETAILS}}` for built-in and new custom templates. `{{prDetailsBlock}}` is supported for flexibility with user-defined templates.
+    *   **Heading**: The template must include its own heading for this section (e.g., `### PR details`).
 
-## Template Structure
+3.  `{{FILES_LIST}}`:
+    *   **Content**: A list of files changed in the PR. If no files were changed, it will contain a message like "No files changed in this PR.".
+    *   **Heading**: The template must include its own heading for this section (e.g., `### files changed`).
 
-### Standard Templates
-A "standard" template is one that includes `{{SETUP}}`, `{{LINK}}`, and at least one of (`{{PR_DETAILS}}` or `{{prDetailsBlock}}`). Such templates are used as-is after token replacement. The default templates provided in this directory are standard.
+4.  `{{DIFF_CONTENT}}`:
+    *   **Content**: The actual diff content (full PR diff, commit diffs, etc., based on selections). This may be an empty string if no diffs are requested/available. `renderTemplate.ts` will remove the line if the token is empty.
+    *   **Heading**: The diff blocks themselves usually carry `### XXX DIFF` headers, so no additional heading is typically needed in the template around `{{DIFF_CONTENT}}` itself, but it should be placed logically.
 
-Example (`review.md`):
+5.  `{{LINK}}`:
+    *   **Content**: A direct link to the pull request on the SCM platform (e.g., GitHub).
+    *   **Heading**: No specific heading is required by the system for this token, but it's often placed at the end.
+
+### Standard Template Skeleton Example:
+
+All built-in templates follow this general structure. Custom templates should also adhere to it.
+
 ```markdown
 ## SETUP
 ` ```bash
@@ -32,47 +42,37 @@ Example (`review.md`):
 ` ```
 
 ### TASK
-You are reviewing the following pull-request diff...
+(Optional: Any specific instructions for the LLM for this prompt mode)
 
+### PR details
 {{PR_DETAILS}}
 
+### files changed
 {{FILES_LIST}}
 
+### diff
 {{DIFF_CONTENT}}
 
 {{LINK}}
 ```
 
-### Non-Standard Templates (Fragments)
-If a template stored in settings (e.g., customized by a user) does not meet the "standard" criteria (e.g., it's just a task description), the system will wrap it:
-1.  A `## SETUP` section with the `{{SETUP}}` content will be prepended.
-2.  The user's custom template content will be rendered (with tokens like `{{PR_DETAILS}}`, `{{DIFF_CONTENT}}`, etc., replaced).
-3.  If the user's custom template did not use `{{PR_DETAILS}}` or `{{prDetailsBlock}}`, the PR details content will be appended after their custom content.
-4.  A `{{LINK}}` section will be appended at the very end.
+*(You can add additional prose or markdown elements around these core blocks as needed for your specific prompt's task.)*
 
-This ensures that critical information (setup, PR context, link) is always part of the prompt, even if the user provides a minimal template focusing only on the task.
+## Token Details
 
-## Avoiding Duplication
+-   `{{SETUP}}`: Bash commands for local repository setup.
+-   `{{PR_DETAILS}}`: Primary token for PR title and (stripped) body.
+-   `{{prDetailsBlock}}`: Alternative to `{{PR_DETAILS}}`. If `{{PR_DETAILS}}` is in the template, this slot will be empty. If `{{prDetailsBlock}}` is used (and `{{PR_DETAILS}}` is not), this slot receives the PR details.
+-   `{{FILES_LIST}}`: List of changed files, or a "no files changed" message.
+-   `{{DIFF_CONTENT}}`: Selected diff(s).
+-   `{{LINK}}`: URL to the PR.
 
-Using both `{{PR_DETAILS}}` and `{{prDetailsBlock}}` in any template (standard or fragment) will result in the PR details appearing only once, where `{{PR_DETAILS}}` takes precedence.
+## Custom Templates
 
-The system prevents common duplication scenarios:
-- **PR details rendered twice**: Standard templates use canonical tokens, preventing fallback append logic
-- **Blocks added multiple times**: The `pushUnique()` function and Map-based deduplication ensure blocks appear only once
-- **Last commit diff + full PR diff**: Guard rails ensure these are mutually exclusive
-- **Legacy template keys**: Only the newest template key is used, preventing multiple versions from being loaded
+If you customize templates via the application settings:
+-   Your custom template **must** include all the tokens (`SETUP`, one of `PR_DETAILS`/`prDetailsBlock`, `FILES_LIST`, `DIFF_CONTENT`, `LINK`).
+-   The system no longer wraps "fragment" templates. Your template is used as-is after token replacement.
+-   If your custom template does not meet the standard contract, `buildRepoPromptText` will throw an error.
 
-## Best Practices
-
-1. Use `{{PR_DETAILS}}` instead of `{{prDetailsBlock}}` for clarity
-2. Include all standard tokens (`{{SETUP}}`, `{{PR_DETAILS}}`, `{{LINK}}`) to create a "standard" template
-3. Keep templates focused on the task while letting the system handle structural elements
-4. Test custom templates to ensure they don't accidentally include duplicate content
-
-### Potential Edge Cases
-
-**Custom templates with both tokens**: If a user creates a template that includes both `{{PR_DETAILS}}` and `{{prDetailsBlock}}`, the system will render PR details only once at the `{{PR_DETAILS}}` location, and `{{prDetailsBlock}}` will be replaced with an empty string.
-
-**Mis-matched prompt mode keys**: The system uses lowercased enum literals for prompt modes. Ensure consistency to avoid fallback behavior.
-
-**Future block additions**: When adding new block types, always use `pushUnique()` to prevent accidental duplicates in the blocks array.
+## Linting
+A linting script (`scripts/lint-templates.ts`) is available to check if the default templates conform to these rules.

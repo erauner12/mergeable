@@ -302,7 +302,8 @@ export async function buildRepoPromptText(
   let prBodyContent = pull.body?.trim() || "_No description provided._";
 
   // Add "files changed" list to PR body if full PR diff is not included and files exist
-  const filesAlreadyListed = /### files changed \(\d+\)/.test(prBodyContent); // ADDED GUARD
+  const FILES_LIST_RE = /^\s*###\s+files\s+changed\s+\(\d+\)/im; // UPDATED REGEX
+  const filesAlreadyListed = FILES_LIST_RE.test(prBodyContent); // Use new regex
 
   if (
     !diffOptions.includePr &&

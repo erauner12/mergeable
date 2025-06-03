@@ -316,7 +316,7 @@ describe("buildRepoPromptText", () => {
         - foo.ts
         - bar.md
       `,
-      files: [],   // pull.files is irrelevant here
+      files: [], // pull.files is irrelevant here
     });
 
     const meta = { ...mockResolvedMetaBase, files: ["foo.ts", "bar.md"] };
@@ -329,10 +329,12 @@ describe("buildRepoPromptText", () => {
       meta,
     );
 
-    const body = (blocks.find(b => b.id.startsWith("pr-details")) as CommentBlockInput).commentBody;
+    const body = (
+      blocks.find((b) => b.id.startsWith("pr-details")) as CommentBlockInput
+    ).commentBody;
 
     // should appear exactly once
-    expect(body.match(/### files changed/g)?.length).toBe(1);
+    expect(body.match(/### files changed/gi)?.length).toBe(1); // UPDATED to use /gi
     // Also check that the content of the list is from the *original* body, not re-appended
     expect(body).toContain("Some intro.");
     expect(body).toContain("- foo.ts");

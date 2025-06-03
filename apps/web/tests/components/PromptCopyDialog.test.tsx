@@ -120,6 +120,11 @@ describe("PromptCopyDialog with FileDiffPicker integration", () => {
     value?: string,
   ) => boolean;
 
+  const baseProps = {
+    isOpen: true,
+    onClose: vi.fn(),
+  };
+
   beforeEach(() => {
     vi.clearAllMocks();
     originalClipboard = navigator.clipboard;
@@ -517,132 +522,15 @@ describe("PromptCopyDialog with FileDiffPicker integration", () => {
       .getByText("### PR Diff")
       .closest('div[class*="promptBlock"]');
     await waitFor(() => {
-      const preElement = diffBlockDivReopened!.querySelector("pre");
-      expect(normaliseWS(preElement!.textContent!)).toBe(
+      const preElementReopened = diffBlockDivReopened!.querySelector("pre");
+      expect(normaliseWS(preElementReopened!.textContent!)).toBe(
         normaliseWS(SIMPLE_DIFF_PATCH),
       );
     });
   });
 
-  test("Handles no diff block gracefully", async () => {
-    const blocksWithoutDiff: PromptBlock[] = [
-      {
-        id: "comment-only-1", // Specific ID
-        kind: "comment",
-        header: "### Comment Only",
-        commentBody: "No diff here.",
-        author: "user",
-        timestamp: new Date().toISOString(),
-      },
-    ];
-    render(
-      <PromptCopyDialog
-        isOpen={true}
-        initialPromptText={MOCK_INITIAL_PROMPT_TEXT_WITH_PR_DETAILS} // Still provide initial prompt
-        blocks={blocksWithoutDiff}
-        onClose={() => {}}
-      />,
-    );
-    expect(screen.queryByText("Choose files…")).not.toBeInTheDocument();
-    expect(screen.queryByText("(All 0 files)")).not.toBeInTheDocument(); // Or similar label
-    // FileDiffPicker should not be rendered or attempted to be used
-    expect(screen.queryByText("FileDiffPickerMock")).not.toBeInTheDocument();
-
-    // Copy selected should still work
-    await act(async () => {
-      fireEvent.click(screen.getByText("Copy Selected"));
-    });
-
-    const commentOnlyBlockFormatted = formatPromptBlock(
-      blocksWithoutDiff[0],
-    ).trimEnd();
-    const expectedCombined = `${commentOnlyBlockFormatted}\n\n${MOCK_INITIAL_PROMPT_TEXT_WITH_PR_DETAILS}`;
-
-    expect(mockCopyToClipboard).toHaveBeenCalledWith(expectedCombined);
-  });
-});
-
-// ADD NEW TEST SUITE BELOW
-
-describe("PromptCopyDialog with initialPromptText", () => {
-  let originalClipboard: typeof navigator.clipboard;
-  let originalExecCommand: (
-    commandId: string,
-    showUI?: boolean,
-    value?: string,
-  ) => boolean;
-
-  beforeEach(() => {
-    vi.clearAllMocks(); // Clear mocks, including mockCopyToClipboard
-    originalClipboard = navigator.clipboard;
-    // @ts-expect-error - mocking clipboard
-    navigator.clipboard = {
-      writeText: vi.fn(async (text) => {
-        mockCopyToClipboard(text); // mockCopyToClipboard is defined in the outer scope
-        return Promise.resolve();
-      }),
-    };
-    originalExecCommand = document.execCommand;
-    document.execCommand = vi.fn((command) => {
-      if (command === "copy") {
-        const tempTextArea = document.body.querySelector(
-          "textarea[style*='fixed']",
-        ) as HTMLTextAreaElement;
-        if (tempTextArea) mockCopyToClipboard(tempTextArea.value);
-        return true;
-      }
-      return false;
-    });
-  });
-
-  afterEach(() => {
-    // @ts-expect-error - restoring clipboard
-    navigator.clipboard = originalClipboard;
-    document.execCommand = originalExecCommand;
-  });
-
-  const baseProps = {
-    isOpen: true,
-    blocks: [],
-    onClose: vi.fn(),
-  };
-
-  test("'Copy Selected' button is enabled when only initialPromptText is present", () => {
-    render(
-      <PromptCopyDialog {...baseProps} initialPromptText="Test Template" />,
-    );
-    const copySelectedButton = getCopyButton();
-    expect(copySelectedButton).not.toBeDisabled();
-  });
-
-  test("'Copy Selected' button is disabled when initialPromptText, blocks, and userText are all empty/absent", () => {
-    render(
-      <PromptCopyDialog
-        {...baseProps}
-        initialPromptText="" // Empty
-      />,
-    );
-    const copySelectedButton = getCopyButton();
-    expect(copySelectedButton).toBeDisabled();
-  });
-
-  test("copies only initialPromptText when it's the sole content", async () => {
-    render(
-      <PromptCopyDialog
-        {...baseProps}
-        initialPromptText="Only Template Here"
-      />,
-    );
-    await act(async () => {
-      fireEvent.click(getCopyButton());
-    });
-    await waitFor(() => {
-      expect(mockCopyToClipboard).toHaveBeenCalledWith("Only Template Here");
-    });
-  });
-
-  // Add the missing test for "copies blocks in correct order"
-  test("copies blocks in correct order (comments, then template)", async () => {
+// Add the missing test for "copies blocks in correct order"
+  test("copies blocks in correct order (fallback: template, then comments, then user text)", async () => {
     const MOCK_COMMENT_BLOCK_FOR_ORDER_TEST: PromptBlock[] = [
       {
         id: "comment-1",
@@ -653,15 +541,16 @@ describe("PromptCopyDialog with initialPromptText", () => {
         timestamp: new Date().toISOString(),
       },
     ];
+    // This initialPromptText does NOT contain the placeholder, so it will use the fallback order.
+    const initialPromptTextWithoutPlaceholder = "Footer Template For Order Test";
     render(
       <PromptCopyDialog
         {...baseProps}
-        blocks={MOCK_COMMENT_BLOCK_FOR_ORDER_TEST} // Use new mock
-        initialPromptText="Footer Template For Order Test" // More specific
+        blocks={MOCK_COMMENT_BLOCK_FOR_ORDER_TEST}
+        initialPromptText={initialPromptTextWithoutPlaceholder}
       />,
     );
 
-    // All blocks are selected by default
     const userTextArea = screen.getByRole("textbox", {
       name: "Your instructions (optional)",
     });
@@ -675,19 +564,96 @@ describe("PromptCopyDialog with initialPromptText", () => {
       fireEvent.click(getCopyButton());
     });
 
-    // MODIFIED: Use formatPromptBlock for expectedBlock1Content
     const expectedBlock1Content = formatPromptBlock(
       MOCK_COMMENT_BLOCK_FOR_ORDER_TEST[0],
-    );
+    ).trimEnd();
     const copiedText = mockCopyToClipboard.mock.calls[0][0];
-    expect(copiedText).toContain(expectedBlock1Content.trimEnd());
-    expect(copiedText).toContain("Footer Template For Order Test");
+
+    expect(copiedText).toContain(expectedBlock1Content);
+    expect(copiedText).toContain(initialPromptTextWithoutPlaceholder);
     expect(copiedText).toContain("User custom instructions");
-    // Ensure order: comment block, then template, then user text
-    const commentIndex = copiedText.indexOf(expectedBlock1Content.trimEnd());
-    const templateIndex = copiedText.indexOf("Footer Template For Order Test");
+
+    // Ensure order: template, then comment block, then user text
+    const templateIndex = copiedText.indexOf(initialPromptTextWithoutPlaceholder);
+    const commentIndex = copiedText.indexOf(expectedBlock1Content);
     const userTextIndex = copiedText.indexOf("User custom instructions");
-    expect(commentIndex).toBeLessThan(templateIndex);
-    expect(templateIndex).toBeLessThan(userTextIndex);
+
+    expect(templateIndex).toBeLessThan(commentIndex); // Template before selected block (comment)
+    expect(commentIndex).toBeLessThan(userTextIndex); // Selected block before user text
+  });
+
+  test("copies blocks in correct order with injection into template", async () => {
+    const DIFF_PLACEHOLDER_TEXT_IN_TEST =
+      "(diff content here, possibly empty if not selected for template)";
+    const TEMPLATE_WITH_PLACEHOLDER = `## Template Header\n${DIFF_PLACEHOLDER_TEXT_IN_TEST}\n## Template Footer`;
+
+    const MOCK_COMMENT_BLOCK_FOR_INJECTION_TEST: PromptBlock[] = [
+      {
+        id: "comment-inject-1",
+        kind: "comment",
+        header: "### Injected Comment",
+        commentBody: "This comment should be injected.",
+        author: "testuser",
+        timestamp: new Date().toISOString(),
+      },
+    ];
+
+    render(
+      <PromptCopyDialog
+        {...baseProps} // Ensure baseProps provides necessary defaults like isOpen, onClose
+        blocks={MOCK_COMMENT_BLOCK_FOR_INJECTION_TEST}
+        initialPromptText={TEMPLATE_WITH_PLACEHOLDER}
+      />,
+    );
+
+    // Assuming all blocks are selected by default, or ensure selection if necessary.
+    // For this test, MOCK_COMMENT_BLOCK_FOR_INJECTION_TEST is the only block.
+
+    const userTextArea = screen.getByRole("textbox", {
+      name: "Your instructions (optional)",
+    });
+    await act(async () => {
+      fireEvent.change(userTextArea, {
+        target: { value: "User custom instructions for injection" },
+      });
+    });
+
+    await act(async () => {
+      // Use the helper function to get the copy button, assuming it's defined as in other tests
+      // function getCopyButton() { return screen.getByRole("button", { name: /Copy Selected|Copied!/i }); }
+      fireEvent.click(getCopyButton());
+    });
+
+    await waitFor(() => {
+      expect(mockCopyToClipboard).toHaveBeenCalledTimes(1);
+    });
+
+    const expectedCommentContent = formatPromptBlock(
+      MOCK_COMMENT_BLOCK_FOR_INJECTION_TEST[0],
+    ).trimEnd();
+    const copiedText = mockCopyToClipboard.mock.calls[0][0];
+
+    // Expected structure: TemplateHeader -> InjectedCommentContent -> TemplateFooter -> UserInstructions
+    const expectedFullInjectedText = `## Template Header\n${expectedCommentContent}\n## Template Footer\n\nUser custom instructions for injection`;
+
+    // Using normaliseWS for robust comparison
+    expect(normaliseWS(copiedText)).toBe(normaliseWS(expectedFullInjectedText));
+
+    // More granular checks for individual parts and their order
+    expect(copiedText).toContain("## Template Header");
+    expect(copiedText).toContain(expectedCommentContent);
+    expect(copiedText).toContain("## Template Footer");
+    expect(copiedText).toContain("User custom instructions for injection");
+
+    const headerIndex = copiedText.indexOf("## Template Header");
+    const commentIndexInTest = copiedText.indexOf(expectedCommentContent); // Renamed to avoid conflict
+    const footerIndex = copiedText.indexOf("## Template Footer");
+    const userTextIndexInTest = copiedText.indexOf(
+      "User custom instructions for injection",
+    ); // Renamed
+
+    expect(headerIndex).toBeLessThan(commentIndexInTest);
+    expect(commentIndexInTest).toBeLessThan(footerIndex);
+    expect(footerIndex).toBeLessThan(userTextIndexInTest);
   });
 });

@@ -28,6 +28,35 @@ import { formatPromptBlock } from "../lib/repoprompt";
 import { FileDiffPicker } from "./FileDiffPicker";
 import styles from "./PromptCopyDialog.module.scss";
 
+// Constants for injection logic
+const DIFF_PLACEHOLDER_TEXT = "(diff content here, possibly empty if not selected for template)";
+const DIFF_TOKEN_TEXT = "{{DIFF_CONTENT}}";
+
+interface InjectResult {
+  injected: boolean;
+  result: string;
+}
+
+// Helper function to inject selected content into template
+function injectSelectionIntoTemplate(template: string, selectionToInject: string): InjectResult {
+  // Try replacing placeholder text first
+  if (template.includes(DIFF_PLACEHOLDER_TEXT)) {
+    return {
+      injected: true,
+      result: template.replace(DIFF_PLACEHOLDER_TEXT, selectionToInject),
+    };
+  }
+  // Then try replacing the DIFF_CONTENT token
+  if (template.includes(DIFF_TOKEN_TEXT)) {
+    return {
+      injected: true,
+      result: template.replace(DIFF_TOKEN_TEXT, selectionToInject),
+    };
+  }
+  // If neither is found, return original template and indicate no injection
+  return { injected: false, result: template };
+}
+
 // Helper for copying text to clipboard
 async function copyTextToClipboard(text: string): Promise<boolean> {
   try {
@@ -117,7 +146,6 @@ export function PromptCopyDialog({
     return defaults;
   });
   const [userText, setUserText] = useState<string>(""); // ADDED userText state
-  const [hadUserTextEver, setHadUserTextEver] = useState(false); // ADDED hadUserTextEver state
 
   // State for FileDiffPicker and its data
   const [isFileDiffPickerOpen, setFileDiffPickerOpen] = useState(false);
@@ -174,7 +202,6 @@ export function PromptCopyDialog({
     } else {
       // if !isOpen
       setUserText(""); // Existing logic to reset userText
-      setHadUserTextEver(false); // ADDED: Reset hadUserTextEver
       // Reset diff-related state when dialog closes
       setDiffPatchData(null);
       setSelectedFilePaths(new Set());
@@ -281,31 +308,29 @@ export function PromptCopyDialog({
     return result;
   }, [blocks, selectedIds, diffPatchData, selectedFilePaths]);
 
+  // Refactored: Use injectSelectionIntoTemplate for prompt assembly
   const getFinalPrompt = (): string => {
-    // Keep both the raw and a trimmed version of the selection so we can
-    // decide later which to return.
-    const selectionOriginal = currentSelectedText;
-    const selectionTrimmed = selectionOriginal.trimEnd();
-
     const template = initialPromptText.trim();
+    const selectionClean = currentSelectedText.trimEnd();
     const extra = userText.trim();
 
-    // If *only* the selection has content, preserve its original formatting
-    // (including a possible trailing newline from `formatPromptBlock`).
-    const onlySelection =
-      selectionOriginal.trim() !== "" && template === "" && extra === "";
-    if (onlySelection) {
-      return hadUserTextEver ? selectionOriginal : selectionTrimmed;
+    if (selectionClean) {
+      const { injected, result: injectedTemplate } =
+        injectSelectionIntoTemplate(template, selectionClean);
+      if (injected) {
+        // Injected selected content into the template
+        return [injectedTemplate, extra].filter(Boolean).join("\n\n").trimEnd();
+      } else {
+        // Fallback: template first, then selected content, then extra text
+        return [template, selectionClean, extra]
+          .filter(Boolean)
+          .join("\n\n")
+          .trimEnd();
+      }
+    } else {
+      // No selected blocks, just template and extra text
+      return [template, extra].filter(Boolean).join("\n\n").trimEnd();
     }
-
-    // Remove any leading files-list header from the selected diff to avoid
-    // duplicating the template’s own {{FILES_LIST}} section.
-    // const selectionClean = stripFilesListSection(selectionTrimmed); // REMOVE THIS LINE
-    const selectionClean = selectionTrimmed; // MODIFIED: Use selectionTrimmed directly
-
-    // Otherwise, build up the prompt from trimmed pieces.
-    const sections = [selectionClean, template, extra].filter(Boolean);
-    return sections.join("\n\n").trimEnd();
   };
 
   const nothingToSend =
@@ -544,7 +569,6 @@ export function PromptCopyDialog({
           onChange={(e) => {
             const v = e.target.value;
             setUserText(v);
-            if (v.trim() !== "") setHadUserTextEver(true);
           }}
           id="prompt-composer-input"
           aria-labelledby="prompt-composer-label"

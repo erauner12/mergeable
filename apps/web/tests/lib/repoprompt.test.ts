@@ -721,6 +721,73 @@ describe("buildRepoPromptText", () => {
     expect(promptText).not.toContain("Respond Comment"); // Comments not in initial prompt
     expect(promptText).toContain("### PR #203 DETAILS");
   });
+
+  it("should return blocks with unique IDs", async () => {
+    const pull = mockPull({
+      number: 99,
+      repo: "owner/unique-test",
+      branch: "test-branch",
+      files: ["file.ts"],
+      body: "Initial PR body for unique ID test.",
+      url: "https://github.com/owner/unique-test/pull/99",
+      author: { id: "u1", name: "testauthor", avatarUrl: "avatar.url", bot: false },
+      createdAt: "2024-01-01T00:00:00Z",
+    });
+    const meta = { // mockResolvedMetaBase is now in scope
+      ...mockResolvedMetaBase,
+      repo: "unique-test",
+      branch: "test-branch",
+      files: ["file.ts", "another.md"],
+    };
+
+    // Mock GitHub client calls to ensure various block types can be generated
+    vi.mocked(gh.fetchPullComments).mockResolvedValue([
+      { id: "comment-1", kind: "comment", header: "A comment", commentBody: "body", author: "c", timestamp: "ts" },
+    ]);
+    vi.spyOn(gh, "getPullRequestDiff").mockResolvedValue("full pr diff content");
+    vi.spyOn(gh, "listPrCommits").mockImplementation(async (_owner, _repo, _pullNumber, perPage) => {
+      if (perPage === 1) { // For last commit
+        return [{ sha: "lastsha", commit: { message: "Last commit" } } as PullRequestCommit];
+      }
+      // For specific commits (or general listing if used)
+      return [
+        { sha: "specsha1", commit: { message: "Specific commit ONE" } },
+        { sha: "specsha2", commit: { message: "Specific commit TWO" } },
+      ] as PullRequestCommit[];
+    });
+    vi.spyOn(gh, "getCommitDiff").mockImplementation(async (_owner, _repo, sha) => {
+      if (sha === "lastsha") return "diff for last commit";
+      if (sha === "specsha1") return "diff for specsha1";
+      if (sha === "specsha2") return "diff for specsha2";
+      return `diff for ${sha}`;
+    });
+
+
+    const { blocks } = await buildRepoPromptText(
+      pull,
+      {
+        includePr: true,          // Generates diff-pr-<pull.id>
+        includeLastCommit: false, // Set to false to avoid conflict with includePr due to guard rail, test specific commit diffs separately
+        includeComments: true,    // Generates comment-1 (from mock)
+        commits: ["specsha1"],    // Generates diff-commit-specsha1
+      },
+      defaultPromptMode,
+      { auth: "token", baseUrl: "url" }, // endpoint
+      meta
+    );
+
+    const ids = blocks.map(b => b.id);
+    const uniqueIds = new Set(ids);
+    expect(ids.length, `Found duplicate IDs: ${JSON.stringify(ids.filter((id, i) => ids.indexOf(id) !== i))}`).toBe(uniqueIds.size);
+
+    // Check that expected blocks are present (and thus their IDs contributed to the uniqueness check)
+    expect(blocks.some(b => b.id === `pr-details-${pull.id}`)).toBe(true);
+    expect(blocks.some(b => b.id === "comment-1")).toBe(true);
+    expect(blocks.some(b => b.id === `diff-pr-${pull.id}`)).toBe(true);
+    expect(blocks.some(b => b.id === "diff-commit-specsha1")).toBe(true);
+    // Last commit diff should not be present because includePr=true and the internal guard rail sets includeLastCommit=false
+    expect(blocks.some(b => b.id.startsWith("diff-last-commit-"))).toBe(false);
+  });
 });
 // Remove old tests for buildRepoPromptLink that checked prompt encoding or diff content in the URL
 // The old tests for buildRepoPromptLink are effectively split.

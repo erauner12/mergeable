@@ -16,6 +16,13 @@ import { getDefaultRoot, getPromptTemplate } from "./settings"; // Added getProm
  * - When reading these parameters back using `URLSearchParams.get()`, the browser automatically decodes them.
  */
 
+/** Pushes `item` into `arr` IFF no existing element satisfies `key(item)`. */
+function pushUnique<T>(arr: T[], item: T, key: (t: T) => string) {
+  if (!arr.some(existing => key(existing) === key(item))) {
+    arr.push(item);
+  }
+}
+
 export type LaunchMode = "workspace" | "folder";
 
 // New: PromptMode enum and default
@@ -117,6 +124,38 @@ function formatDateUtcShort(ts: string): string {
     d.getUTCDate(),
   ).padStart(2, "0")}`;
 }
+
+/**
+ * Ensures the "files changed" list is added to the body content idempotently.
+ * @param bodyInput The original body content.
+ * @param files List of file paths to include.
+ * @param placeholderIfEmpty The string that represents an empty/placeholder body.
+ * @returns The body content, potentially with the "files changed" list appended.
+ */
+function withFileList(bodyInput: string, files: string[], placeholderIfEmpty: string): string {
+  const FILES_LIST_RE = /^\s*###\s+files\s+changed\s+\(\d+\)/im;
+  const canonicalHeader = "### files changed";
+
+  // If a list already exists (matched by robust regex) or no files to list, return the original body.
+  if (FILES_LIST_RE.test(bodyInput) || files.length === 0) {
+    return bodyInput;
+  }
+
+  // If no list exists and there are files, append a canonical one.
+  const filesList = files.map((f) => `- ${f}`).join("\n");
+  const sectionToAdd = `${canonicalHeader} (${files.length})\n${filesList}`;
+
+  const trimmedBody = bodyInput.trim();
+
+  // If the original body (trimmed) was empty or just the placeholder, the new section is the whole body.
+  if (trimmedBody === "" || trimmedBody === placeholderIfEmpty) {
+    return sectionToAdd;
+  }
+
+  // Append to existing body content
+  return `${trimmedBody}\n\n${sectionToAdd}`; // Ensure separation
+}
+
 
 // Renamed and updated to handle single PromptBlock
 export function formatPromptBlock(block: PromptBlock): string {
@@ -299,39 +338,24 @@ export async function buildRepoPromptText(
   const initiallySelectedBlocks: PromptBlock[] = []; // For generating the initial promptText
 
   // 0. PR Details Block (always first, always initially selected)
-  let prBodyContent = pull.body?.trim() || "_No description provided._";
+  const placeholderDescription = "_No description provided._";
+  let prBodyForBlock = pull.body?.trim() || placeholderDescription;
 
-  // Add "files changed" list to PR body if full PR diff is not included and files exist
-  const FILES_LIST_RE = /^\s*###\s+files\s+changed\s+\(\d+\)/im; // UPDATED REGEX
-  const filesAlreadyListed = FILES_LIST_RE.test(prBodyContent); // Use new regex
-
-  if (
-    !diffOptions.includePr &&
-    meta.files &&
-    meta.files.length > 0 &&
-    !filesAlreadyListed // ADDED GUARD CONDITION
-  ) {
-    const filesChangedHeader = `### files changed (${meta.files.length})`;
-    const filesList = meta.files.map((f) => `- ${f}`).join("\n");
-    // Ensure there's a separation if prBodyContent is not empty or just the placeholder
-    const separator =
-      prBodyContent && prBodyContent !== "_No description provided._"
-        ? "\n\n"
-        : "";
-    prBodyContent = `${prBodyContent}${separator}${filesChangedHeader}\n${filesList}`;
+  if (!diffOptions.includePr && meta.files && meta.files.length > 0) {
+    prBodyForBlock = withFileList(prBodyForBlock, meta.files, placeholderDescription);
   }
 
   const prDetailsBlock: CommentBlockInput = {
     id: `pr-details-${pull.id}`,
     kind: "comment",
     header: `### PR #${pull.number} DETAILS: ${pull.title}`,
-    commentBody: prBodyContent, // Use the potentially modified body
+    commentBody: prBodyForBlock, // Use the processed body
     author: pull.author?.name ?? "unknown",
     authorAvatarUrl: pull.author?.avatarUrl,
     timestamp: pull.createdAt,
   };
-  allPromptBlocks.push(prDetailsBlock);
-  initiallySelectedBlocks.push(prDetailsBlock);
+  pushUnique(allPromptBlocks, prDetailsBlock, b => b.id);
+  pushUnique(initiallySelectedBlocks, prDetailsBlock, b => b.id);
 
   // 1. Comments, Reviews, Threads (if requested)
   if (diffOptions.includeComments) {
@@ -343,7 +367,7 @@ export async function buildRepoPromptText(
         repo,
         pull.number,
       );
-      allPromptBlocks.push(...commentBlocks);
+      commentBlocks.forEach(block => pushUnique(allPromptBlocks, block, b => b.id));
       // Comment blocks are NOT initially selected by default for the promptText,
       // especially for "adjust-pr" mode.
       if (mode !== "adjust-pr") {
@@ -371,10 +395,10 @@ export async function buildRepoPromptText(
         header: "### FULL PR DIFF",
         patch: prDiff,
       };
-      allPromptBlocks.push(block);
+      pushUnique(allPromptBlocks, block, b => b.id);
       // For "adjust-pr" mode, only include if explicitly picked (which diffOptions.includePr signifies)
       // For other modes, include if diffOptions.includePr is true.
-      initiallySelectedBlocks.push(block);
+      pushUnique(initiallySelectedBlocks, block, b => b.id);
     }
   }
 
@@ -409,10 +433,10 @@ export async function buildRepoPromptText(
             header: `### LAST COMMIT (${shortSha} — "${commitTitle}")`,
             patch: lastCommitDiff,
           };
-          allPromptBlocks.push(block);
+          pushUnique(allPromptBlocks, block, b => b.id);
           // For "adjust-pr" mode, only include if explicitly picked (diffOptions.includeLastCommit)
           // For other modes, include if diffOptions.includeLastCommit is true.
-          initiallySelectedBlocks.push(block);
+          pushUnique(initiallySelectedBlocks, block, b => b.id);
         }
       } else {
         console.warn(
@@ -459,10 +483,10 @@ export async function buildRepoPromptText(
           header: `### COMMIT (${shortSha} — "${commitTitle}")`,
           patch: commitDiff,
         };
-        allPromptBlocks.push(block);
+        pushUnique(allPromptBlocks, block, b => b.id);
         // For "adjust-pr" mode, only include if explicitly picked (diffOptions.commits.length > 0)
         // For other modes, include if diffOptions.commits.length > 0.
-        initiallySelectedBlocks.push(block); // Assuming specific commits are also initially selected if requested
+        pushUnique(initiallySelectedBlocks, block, b => b.id); // Assuming specific commits are also initially selected if requested
       }
     }
   }
@@ -505,5 +529,10 @@ export async function buildRepoPromptText(
   promptPayloadParts.push(`🔗 ${prLink}`);
   const promptText = promptPayloadParts.join("\n");
 
-  return { promptText, blocks: allPromptBlocks };
+  // Deduplicate allPromptBlocks by id, keeping the last occurrence.
+  const uniqueAllPromptBlocks = Array.from(
+    new Map(allPromptBlocks.map(b => [b.id, b])).values()
+  );
+
+  return { promptText, blocks: uniqueAllPromptBlocks };
 }

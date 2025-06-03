@@ -213,7 +213,7 @@ describe("buildRepoPromptText", () => {
 
     // Setup default templates for this suite using the local setMockTemplateBody
     const defaultTemplateBodyForMode = (mode: PromptMode) =>
-      `MODE ${mode.toUpperCase()} TEMPLATE:\nSETUP:\n{{SETUP}}\nPR_DETAILS:\n{{PR_DETAILS}}\nFILES_LIST:\n{{FILES_LIST}}\nDIFF_CONTENT:\n{{DIFF_CONTENT}}\nLINK:\n{{LINK}}`;
+      `MODE ${mode.toUpperCase()} TEMPLATE:\nSETUP:\n{{SETUP}}\nPR_DETAILS:\n{{PR_DETAILS}}\nFILES_LIST:\n{{FILES_LIST}}\nLINK:\n{{LINK}}`;
 
     setMockTemplateBody("implement", defaultTemplateBodyForMode("implement"));
     setMockTemplateBody("review", defaultTemplateBodyForMode("review"));
@@ -283,7 +283,7 @@ describe("buildRepoPromptText", () => {
     expect(slots.FILES_LIST).toBe(
       "### files changed (2)\n- fileA.ts\n- fileB.ts",
     );
-    expect(slots.DIFF_CONTENT).toBe("");
+    expect(slots.DIFF_CONTENT ?? "").toBe(""); // DIFF_CONTENT is now always empty or undefined
     expect(slots.LINK).toBe("🔗 https://github.com/owner/myrepo/pull/123");
 
     // Duplicate content checks
@@ -319,18 +319,14 @@ describe("buildRepoPromptText", () => {
     );
     // PR_DETAILS should not contain the file list
     const prDetailsBlock = (
-      await buildRepoPromptText(
-        pull,
-        { includePr: false },
-        defaultPromptMode,
-        undefined,
-        metaWithFiles,
-      )
+      await buildRepoPromptText(pull, { includePr: false }, defaultPromptMode)
     ).blocks.find((b) => b.id.startsWith("pr-details")) as CommentBlockInput;
-    expect(prDetailsBlock.commentBody).toBe("Original body.");
+    expect(prDetailsBlock).toBeDefined();
+    expect(prDetailsBlock.commentBody).toBe("Original body."); // Only original body
+    expect(prDetailsBlock.commentBody).not.toContain("### files changed");
   });
 
-  it("conditional files list: FILES_LIST slot should be empty if includePr is true, even if meta.files exist", async () => {
+  it("conditional files list: should provide empty FILES_LIST slot if meta.files is empty, even if includePr is false", async () => {
     const pull = mockPull({
       number: 1,
       repo: "o/r",
@@ -363,7 +359,9 @@ describe("buildRepoPromptText", () => {
         metaWithFiles,
       )
     ).blocks.find((b) => b.id.startsWith("pr-details")) as CommentBlockInput;
-    expect(prDetailsBlock.commentBody).toBe("Original body.");
+    expect(prDetailsBlock).toBeDefined();
+    expect(prDetailsBlock.commentBody).toBe("Original body."); // Only original body
+    expect(prDetailsBlock.commentBody).not.toContain("### files changed");
   });
 
   it("conditional files list: FILES_LIST slot should be empty if meta.files is empty, even if includePr is false", async () => {
@@ -429,7 +427,7 @@ More PR body text.`;
     });
 
     it("should strip files list from PR_DETAILS if FILES_LIST slot is populated", async () => {
-      const pull = mockPull({ body: prBodyWithFilesList, files: [] }); // files in pull obj not used by logic
+      const pull = mockPull({ body: prBodyWithFilesList, files: [] }); // files in pull obj not used
 
       const { promptText, blocks } = await buildRepoPromptText(
         pull,
@@ -983,8 +981,6 @@ More PR body text.`;
     expect(blocks[2].id).toContain("diff-pr"); // Then diffs
   });
 
-  // ... (keep and adapt other diff-related tests, ensuring they check for block.kind === 'diff' and correct IDs) ...
-
   describe("PR Details Token Replacement", () => {
     const pull = mockPull({
       repo: "owner/myrepo",
@@ -1035,6 +1031,7 @@ More PR body text.`;
         expect(slotsForUserFragment.prDetailsBlock).toMatch(
           prDetailsContentPattern,
         );
+        expect(slotsForUserFragment.DIFF_CONTENT ?? "").toBe(""); // DIFF_CONTENT is now always empty or undefined
       }
 
       // Check final promptText (relies on mock renderTemplate's behavior)
@@ -1073,6 +1070,7 @@ More PR body text.`;
           prDetailsContentPattern,
         );
         expect(slotsForUserFragment.prDetailsBlock).toBe(""); // As PR_DETAILS is present in template
+        expect(slotsForUserFragment.DIFF_CONTENT ?? "").toBe(""); // DIFF_CONTENT is now always empty or undefined
       }
 
       expect(promptText).toMatch(/^## SETUP\n([\s\S]*?)\nSystem Preamble\./m);

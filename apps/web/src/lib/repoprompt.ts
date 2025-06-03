@@ -527,7 +527,7 @@ export async function buildRepoPromptText(
     SETUP: setupString,
     PR_DETAILS: prDetailsString, // {{PR_DETAILS}} always gets the full PR details string
     FILES_LIST: filesListString,
-    // DIFF_CONTENT: diffContentString, // REMOVED
+    DIFF_CONTENT: "", // legacy – kept empty so old templates/tests that still poke for it don’t explode
     LINK: linkString,
     prDetailsBlock: prDetailsContentForBlockToken, // {{prDetailsBlock}} is an alternative, gets content if {{PR_DETAILS}} is absent
   };
@@ -560,7 +560,7 @@ export async function buildRepoPromptText(
       PR_DETAILS: prDetailsString,
       prDetailsBlock: prDetailsContentForBlockToken,
       FILES_LIST: filesListString,
-      // DIFF_CONTENT: diffContentString, // REMOVED
+      DIFF_CONTENT: "", // legacy – kept empty
       // Any other custom tokens the user might have in their fragment would pass through,
       // and if not matched by renderTemplate's cleanup, would remain.
       // Or, if they are on their own line, renderTemplate cleans them.
@@ -585,9 +585,14 @@ export async function buildRepoPromptText(
     promptText = promptSections.join("\n\n");
   }
 
+  // --- ensure deterministic order: PR first, then other comments, then diffs
   const uniqueAllPromptBlocks = Array.from(
     new Map(allPromptBlocks.map((b) => [b.id, b])).values(),
-  );
+  ).sort((a, b) => {
+    const rank = (x: PromptBlock) =>
+      x.id.startsWith("pr-details") ? 0 : x.kind === "comment" ? 1 : 2;
+    return rank(a) - rank(b);
+  });
 
   return { promptText, blocks: uniqueAllPromptBlocks };
 }

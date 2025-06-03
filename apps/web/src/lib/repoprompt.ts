@@ -127,6 +127,16 @@ function formatDateUtcShort(ts: string): string {
 }
 
 /**
+ * Strip "files changed" sections from PR body text to prevent duplication.
+ * Returns the cleaned body and whether a section was found.
+ */
+function stripFilesListSection(body: string): { clean: string; hadSection: boolean } {
+  const regex = /^#{1,3}\s*files changed[^\n]*\n(?:- .*\n?)+/im;
+  const had = regex.test(body);
+  return { clean: body.replace(regex, "").trim(), hadSection: had };
+}
+
+/**
  * Renamed and updated to handle single PromptBlock
  */
 export function formatPromptBlock(block: PromptBlock): string {
@@ -301,17 +311,43 @@ export async function buildRepoPromptText(
   // `initiallySelectedBlocks` will be used to determine content for PR_DETAILS and DIFF_CONTENT slots
   const initiallySelectedBlocks: PromptBlock[] = [];
 
+  // --- Determine PR Body and Files List ---
+  const originalPrBody = pull.body?.trim() || "_No description provided._";
+
+  // Calculate template and determine if FILES_LIST should be populated
+  const mainTemplateString = await getPromptTemplate(mode); // Get template early
+  const hasFilesListToken = mainTemplateString.includes("{{FILES_LIST}}");
+
+  // Pre-calculate whether we'll have diff content based on options
+  const willHaveDiffContentBasedOnOptions =
+    diffOptions.includePr ||
+    diffOptions.includeLastCommit ||
+    (diffOptions.commits && diffOptions.commits.length > 0);
+
+  let filesListString = "";
+  let finalPrBodyForBlock = originalPrBody;
+
+  const shouldPopulateFilesListSlot =
+    hasFilesListToken &&
+    meta.files &&
+    meta.files.length > 0 &&
+    !willHaveDiffContentBasedOnOptions; // If diff content is expected, don't populate FILES_LIST
+
+  if (shouldPopulateFilesListSlot) {
+    const { clean } = stripFilesListSection(originalPrBody);
+    finalPrBodyForBlock = clean;
+    const filesListContent = meta.files.map((f) => `- ${f}`).join("\n");
+    filesListString = `### files changed (${meta.files.length})\n${filesListContent}`;
+  }
+  // If not populating filesListSlot, finalPrBodyForBlock remains originalPrBody,
+  // and filesListString remains empty.
+
   // 0. PR Details Block (always first, always initially selected)
-  const placeholderDescription = "_No description provided._";
-  const prBodyForBlock = pull.body?.trim() || placeholderDescription;
-
-  // Files list is now handled via FILES_LIST slot only, not in PR details
-
   const prDetailsBlock: CommentBlockInput = {
     id: `pr-details-${pull.id}`,
     kind: "comment",
     header: `### PR #${pull.number} DETAILS: ${pull.title}`,
-    commentBody: prBodyForBlock,
+    commentBody: finalPrBodyForBlock, // Use the determined body
     author: pull.author?.name ?? "unknown",
     authorAvatarUrl: pull.author?.avatarUrl,
     timestamp: pull.createdAt,
@@ -462,31 +498,16 @@ export async function buildRepoPromptText(
   const diffContentString = formatListOfPromptBlocks(otherSelectedBlocks);
 
   const linkString = `🔗 ${pull.url.includes("/pull/") ? pull.url : `https://github.com/${owner}/${repo}/pull/${pull.number}`}`;
-  const mainTemplateString = await getPromptTemplate(mode);
-
-  // Smart FILES_LIST generation to prevent duplication with DIFF_CONTENT
-  let filesListString = "";
-  if (!diffOptions.includePr && meta.files && meta.files.length > 0) {
-    // Check if template has both FILES_LIST and DIFF_CONTENT tokens
-    const hasFilesListToken = mainTemplateString.includes("{{FILES_LIST}}");
-    const hasDiffContentToken = mainTemplateString.includes("{{DIFF_CONTENT}}");
-    const willHaveDiffContent = diffContentString.trim().length > 0;
-    
-    // Only populate FILES_LIST if:
-    // 1. Template doesn't have DIFF_CONTENT token, OR
-    // 2. Template has DIFF_CONTENT token but no actual diff content will be present
-    // This prevents duplication when both slots would show file information
-    if (hasFilesListToken && (!hasDiffContentToken || !willHaveDiffContent)) {
-      const filesListContent = meta.files.map((f) => `- ${f}`).join("\n");
-      filesListString = `### files changed (${meta.files.length})\n${filesListContent}`;
-    }
-  }
 
   // Check if template contains the prDetailsBlock token
   // const hasTokenInTemplate = mainTemplateString.includes("{{prDetailsBlock}}"); // This specific variable is no longer used directly in the old way.
 
   // Define how prDetailsBlock token is handled: it gets content only if PR_DETAILS token is NOT in the template.
-  const prDetailsContentForBlockToken = mainTemplateString.includes("{{PR_DETAILS}}") ? "" : prDetailsString;
+  const prDetailsContentForBlockToken = mainTemplateString.includes(
+    "{{PR_DETAILS}}",
+  )
+    ? ""
+    : prDetailsString;
 
   // Define all available slots for rendering
   const allSlots = {
@@ -501,7 +522,8 @@ export async function buildRepoPromptText(
   // Check if this is a "standard" template that handles its own structure
   const isStandardTemplate =
     mainTemplateString.includes("{{SETUP}}") &&
-    (mainTemplateString.includes("{{PR_DETAILS}}") || mainTemplateString.includes("{{prDetailsBlock}}")) &&
+    (mainTemplateString.includes("{{PR_DETAILS}}") ||
+      mainTemplateString.includes("{{prDetailsBlock}}")) &&
     mainTemplateString.includes("{{LINK}}");
 
   let promptText: string;
@@ -528,11 +550,16 @@ export async function buildRepoPromptText(
       // and if not matched by renderTemplate's cleanup, would remain.
       // Or, if they are on their own line, renderTemplate cleans them.
     };
-    const userFragmentRendered = renderTemplate(mainTemplateString, slotsForUserFragment);
+    const userFragmentRendered = renderTemplate(
+      mainTemplateString,
+      slotsForUserFragment,
+    );
     promptSections.push(userFragmentRendered);
 
     // Append PR details if the user's template fragment didn't explicitly include {{PR_DETAILS}} or {{prDetailsBlock}}
-    const userHandledPrDetails = mainTemplateString.includes("{{PR_DETAILS}}") || mainTemplateString.includes("{{prDetailsBlock}}");
+    const userHandledPrDetails =
+      mainTemplateString.includes("{{PR_DETAILS}}") ||
+      mainTemplateString.includes("{{prDetailsBlock}}");
     if (!userHandledPrDetails) {
       promptSections.push(prDetailsString);
     }

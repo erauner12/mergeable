@@ -48,15 +48,15 @@ vi.mock("../../src/lib/toaster", async (importOriginal) => {
 });
 
 // Mock the templateMap from templates.ts as it's used by settings.getPromptTemplate
-const mockRouteTemplateBodies: Record<PromptMode, string> = {
-  implement: "Default Implement MD Template",
-  review: "Default Review MD Template",
-  "adjust-pr": "Default Adjust PR MD Template",
-  respond: "Default Respond MD Template",
+const mockRouteTemplateBodiesForSettingsPage: Record<PromptMode, string> = {
+  implement: "Default Implement MD Template For Settings Page",
+  review: "Default Review MD Template For Settings Page",
+  "adjust-pr": "Default Adjust PR MD Template For Settings Page",
+  respond: "Default Respond MD Template For Settings Page",
 };
 
-// Define a simple default meta object for the mock
-const mockDefaultMetaForSettingsRouteTest: TemplateMeta = {
+// Define a simple default meta object for the mock that settings.tsx will see initially
+const mockDefaultMetaForSettingsPageTest: TemplateMeta = {
   expectsFilesList: true,
   expectsDiffContent: true,
   expectsSetup: true,
@@ -66,18 +66,19 @@ const mockDefaultMetaForSettingsRouteTest: TemplateMeta = {
 };
 
 vi.mock("../../src/lib/templates", async () => {
-  const actualTemplates = await vi.importActual<typeof import("../../src/lib/templates")>("../../src/lib/templates");
+  const actualTemplatesModule = await vi.importActual<typeof import("../../src/lib/templates")>("../../src/lib/templates");
+  // actualAnalyseTemplateFnForSettingsPage = actualTemplatesModule.analyseTemplate; // Not strictly needed if meta is static
+
   const mockedMap: Record<PromptMode, { body: string; meta: TemplateMeta }> = {} as any;
-  for (const mode in mockRouteTemplateBodies) {
-    const body = mockRouteTemplateBodies[mode as PromptMode];
+  for (const mode in mockRouteTemplateBodiesForSettingsPage) {
+    const body = mockRouteTemplateBodiesForSettingsPage[mode as PromptMode];
     mockedMap[mode as PromptMode] = {
       body,
-      // Use a simple predefined meta here for safety, similar to repoprompt.test.ts
-      meta: { ...mockDefaultMetaForSettingsRouteTest },
+      meta: { ...mockDefaultMetaForSettingsPageTest }, // Use static meta for the hoisted mock
     };
   }
   return {
-    ...actualTemplates,
+    ...actualTemplatesModule,
     templateMap: mockedMap,
   };
 });
@@ -113,8 +114,11 @@ describe("Settings Page - Prompt Template Editor", () => {
         // This mock needs to be flexible.
         const dbOverride = (mockDbTemplates as any)[`${mode}_override`];
         if (dbOverride) return dbOverride;
+        
         // Access .body from the mocked templateMap structure
-        return (templates.templateMap as Record<PromptMode, { body: string, meta: TemplateMeta }>)[mode].body;
+        // The `templates.templateMap` here refers to the mocked one from the vi.mock factory above.
+        const map = templates.templateMap as Record<PromptMode, { body: string, meta: TemplateMeta }>;
+        return map[mode].body;
       });
 
     setPromptTemplateSpy = vi
@@ -168,7 +172,8 @@ describe("Settings Page - Prompt Template Editor", () => {
         screen.getAllByRole("textbox", {
           name: /Template for "Implement Changes" mode/i,
         })[0],
-      ).toHaveValue(templates.templateMap.implement.body); // From mocked templateMap.body
+        // Ensure we are comparing against the body from the correctly mocked templateMap
+      ).toHaveValue((templates.templateMap as Record<PromptMode, { body: string, meta: TemplateMeta }>).implement.body);
     });
   });
 
@@ -179,7 +184,7 @@ describe("Settings Page - Prompt Template Editor", () => {
         screen.getAllByRole("textbox", {
           name: /Template for "Implement Changes" mode/i,
         })[0],
-      ).toHaveValue(templates.templateMap.implement.body);
+      ).toHaveValue((templates.templateMap as Record<PromptMode, { body: string, meta: TemplateMeta }>).implement.body);
     });
 
     const modeSelect = screen.getByLabelText("Edit template for mode:");
@@ -194,7 +199,7 @@ describe("Settings Page - Prompt Template Editor", () => {
         screen.getAllByRole("textbox", {
           name: /Template for "Review Code" mode/i,
         })[0],
-      ).toHaveValue(templates.templateMap.review.body); // From mocked templateMap.body
+      ).toHaveValue((templates.templateMap as Record<PromptMode, { body: string, meta: TemplateMeta }>).review.body);
     });
     // eslint-disable-next-line @typescript-eslint/unbound-method
     expect(localStorage.setItem).toHaveBeenCalledWith(
@@ -210,7 +215,7 @@ describe("Settings Page - Prompt Template Editor", () => {
         screen.getAllByRole("textbox", {
           name: /Template for "Implement Changes" mode/i,
         })[0],
-      ).toHaveValue(templates.templateMap.implement.body);
+      ).toHaveValue((templates.templateMap as Record<PromptMode, { body: string, meta: TemplateMeta }>).implement.body);
     });
 
     const textArea = screen.getAllByRole("textbox", {
@@ -244,7 +249,7 @@ describe("Settings Page - Prompt Template Editor", () => {
     const modeSelect = screen.getByLabelText("Edit template for mode:");
     fireEvent.change(modeSelect, { target: { value: "review" } });
     await waitFor(() => {
-        expect(screen.getAllByRole("textbox", {name: /Template for "Review Code" mode/i})[0]).toHaveValue(templates.templateMap.review.body);
+        expect(screen.getAllByRole("textbox", {name: /Template for "Review Code" mode/i})[0]).toHaveValue((templates.templateMap as Record<PromptMode, { body: string, meta: TemplateMeta }>).review.body);
     });
     fireEvent.change(modeSelect, { target: { value: "implement" } });
     await waitFor(() => {

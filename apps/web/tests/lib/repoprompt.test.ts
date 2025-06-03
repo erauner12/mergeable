@@ -135,9 +135,9 @@ describe("buildRepoPromptText", () => {
     );
     getPromptTemplateSpy = vi
       .spyOn(settings, "getPromptTemplate")
-      .mockImplementation((mode: PromptMode) =>
+      .mockImplementation((_mode: PromptMode) =>
         Promise.resolve(
-          `MODE ${mode.toUpperCase()} TEMPLATE:\nSETUP:\n{{SETUP}}\nPR_DETAILS:\n{{PR_DETAILS}}\nFILES_LIST:\n{{FILES_LIST}}\nDIFF_CONTENT:\n{{DIFF_CONTENT}}\nLINK:\n{{LINK}}`,
+          `MODE ${_mode.toUpperCase()} TEMPLATE:\nSETUP:\n{{SETUP}}\nPR_DETAILS:\n{{PR_DETAILS}}\nFILES_LIST:\n{{FILES_LIST}}\nDIFF_CONTENT:\n{{DIFF_CONTENT}}\nLINK:\n{{LINK}}`,
         ),
       );
   });
@@ -334,7 +334,7 @@ More PR body text.`;
       // Reset getPromptTemplateSpy to a generic template for these specific tests
       // to control presence of {{FILES_LIST}} token.
       vi.spyOn(settings, "getPromptTemplate").mockImplementation(
-        (mode: PromptMode) =>
+        (_mode: PromptMode) =>
           Promise.resolve(
             `{{SETUP}}\n{{PR_DETAILS}}\n{{FILES_LIST}}\n{{DIFF_CONTENT}}\n{{LINK}}`,
           ),

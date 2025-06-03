@@ -506,28 +506,42 @@ export async function buildRepoPromptText(
   const basePrompt = await getPromptTemplate(mode);
   // Removed the try-catch block that was handling Promise<string>
 
-  const promptPayloadParts: string[] = [
+  const PR_DETAILS_TOKEN = "{{prDetailsBlock}}";
+  const setupBlock = [
     "## SETUP",
     "```bash",
     `cd ${rootPath}`, // Correctly from meta
     "git fetch origin",
     `git checkout ${branch}`, // Correctly from meta
     "```",
-    "",
-    basePrompt,
-    "",
-  ];
+  ].join("\n");
 
-  if (combinedInitialContent.trim()) {
-    promptPayloadParts.push(combinedInitialContent, "");
+  const linkBlock = `🔗 ${pull.url.includes("/pull/") ? pull.url : `https://github.com/${owner}/${repo}/pull/${pull.number}`}`;
+  const trimmedCombinedInitialContent = combinedInitialContent.trim();
+
+  let mainContentParts: string[];
+
+  if (basePrompt.includes(PR_DETAILS_TOKEN)) {
+    // If token exists, basePrompt is the main structure.
+    // Replace token with content. If content is empty, token is removed.
+    const contentWithTokenReplaced = basePrompt.replace(PR_DETAILS_TOKEN, trimmedCombinedInitialContent);
+    mainContentParts = [setupBlock, contentWithTokenReplaced, linkBlock];
+  } else {
+    // No token, traditional append.
+    // basePrompt is one part, trimmedCombinedInitialContent (if any) is another.
+    if (trimmedCombinedInitialContent) {
+      mainContentParts = [setupBlock, basePrompt, trimmedCombinedInitialContent, linkBlock];
+    } else {
+      mainContentParts = [setupBlock, basePrompt, linkBlock];
+    }
   }
 
-  // Ensure the PR link is correctly formatted
-  const prLink = pull.url.includes("/pull/")
-    ? pull.url
-    : `https://github.com/${owner}/${repo}/pull/${pull.number}`;
-  promptPayloadParts.push(`🔗 ${prLink}`);
-  const promptText = promptPayloadParts.join("\n");
+  // Join the main parts with double newlines, filter out empty/null/whitespace-only parts.
+  const promptText = mainContentParts
+    .filter(part => part && part.trim() !== "")
+    .join("\n\n")
+    .trim();
+
 
   // Deduplicate allPromptBlocks by id, keeping the last occurrence.
   const uniqueAllPromptBlocks = Array.from(

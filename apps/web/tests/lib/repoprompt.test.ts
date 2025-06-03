@@ -1,7 +1,27 @@
 /// <reference types="vitest/globals" />
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { PullRequestCommit } from "../../src/lib/github/client"; // Import renamed type
+import type { PullRequestCommit } from "../../src/lib/github/client";
+import type { PromptMode } from "../../src/lib/repoprompt"; // SUT type
+
+// Get actuals for setting up the mock. These are from the original, unmocked module.
+// This MUST be `await` and at the top level.
+const actualTemplatesModule = await vi.importActual<typeof import("../../src/lib/templates")>("../../src/lib/templates");
+const originalTemplateMapDeepCopy = JSON.parse(JSON.stringify(actualTemplatesModule.templateMap));
+const actualAnalyseTemplateFn = actualTemplatesModule.analyseTemplate;
+
+// This is the state that our mock will expose and our tests will manipulate.
+// Initialize it with a deep copy of the original.
+// This object itself will be mutated by tests.
+const mutableMockedTemplateMap = JSON.parse(JSON.stringify(originalTemplateMapDeepCopy));
+
+vi.mock("../../src/lib/templates", () => ({
+  __esModule: true,
+  templateMap: mutableMockedTemplateMap, // Expose the mutable state
+  analyseTemplate: actualAnalyseTemplateFn, // Expose the original analyseTemplate
+}));
+
+// Now, other imports that might depend on the mocked "../../src/lib/templates" can follow
 import * as gh from "../../src/lib/github/client"; // ← stub network call
 import * as renderTemplateModule from "../../src/lib/renderTemplate"; // Mock renderTemplate
 import {
@@ -10,39 +30,19 @@ import {
   type CommentBlockInput,
   defaultPromptMode,
   formatPromptBlock,
-  type PromptMode,
   type ResolvedPullMeta,
 } from "../../src/lib/repoprompt";
 import { isDiffBlock } from "../../src/lib/repoprompt.guards";
 import * as settings from "../../src/lib/settings";
 import { mockPull } from "../testing";
 
-// Import actuals for mocking
-import * as actualTemplates from "../../src/lib/templates";
 
-// Create the state for the mock
-// Ensure this is a deep copy to avoid modifying the actual module's state if it's cached
-const mockableTemplateMap = JSON.parse(JSON.stringify(actualTemplates.templateMap));
-
-// Mock the templates module
-vi.mock("../../src/lib/templates", () => ({
-  __esModule: true, // Recommended for Vitest mocks
-  templateMap: mockableTemplateMap,
-  analyseTemplate: actualTemplates.analyseTemplate, // Use actual analyseTemplate
-}));
-
-// Define setMockTemplateBody locally
+// Local helper to modify the mock's state
 function setMockTemplateBody(mode: PromptMode, body: string) {
-  if (mockableTemplateMap[mode]) {
-    mockableTemplateMap[mode].body = body;
-    mockableTemplateMap[mode].meta = actualTemplates.analyseTemplate(body);
-  } else {
-    // This case might be hit if a new mode is tested without being in the initial actualTemplates.templateMap
-    mockableTemplateMap[mode] = {
-      body,
-      meta: actualTemplates.analyseTemplate(body),
-    };
-  }
+  mutableMockedTemplateMap[mode] = {
+    body,
+    meta: actualAnalyseTemplateFn(body), // Use the captured actualAnalyseTemplateFn
+  };
 }
 
 // Mock renderTemplate to check its inputs and control its output
@@ -165,22 +165,21 @@ describe("buildRepoPromptText", () => {
     files: ["src/main.ts", "README.md"],
     rootPath: "/tmp/myrepo",
   };
-  // const mockResolvedMeta = mockResolvedMetaBase; // This was defined but not always used, use mockResolvedMetaBase directly or clone
   let listPrCommitsSpy: any;
   let getPullRequestDiffSpy: any;
 
   beforeEach(async () => {
     vi.clearAllMocks();
 
-    // Reset mockableTemplateMap to its original state from actuals
-    const originalActualMap = JSON.parse(JSON.stringify(actualTemplates.templateMap));
-    // Clear current mockableTemplateMap
-    for (const key in mockableTemplateMap) {
-        delete mockableTemplateMap[key];
+    // Reset mutableMockedTemplateMap to a fresh copy of the original for test isolation
+    const freshCopy = JSON.parse(JSON.stringify(originalTemplateMapDeepCopy));
+    // Clear current keys from the mutable object
+    for (const key in mutableMockedTemplateMap) {
+      delete mutableMockedTemplateMap[key];
     }
-    // Repopulate with fresh copy
-    for (const key in originalActualMap) {
-        mockableTemplateMap[key] = originalActualMap[key];
+    // Repopulate the mutable object with fresh copy
+    for (const key in freshCopy) {
+      mutableMockedTemplateMap[key] = freshCopy[key];
     }
 
     getPullRequestDiffSpy = vi

@@ -26,7 +26,6 @@ function pushUnique<T>(arr: T[], item: T, key: (t: T) => string) {
     arr.push(item);
   }
 }
-
 export type LaunchMode = "workspace" | "folder";
 
 // New: PromptMode enum and default
@@ -127,19 +126,6 @@ function formatDateUtcShort(ts: string): string {
   return `${d.getUTCFullYear()}-${months[d.getUTCMonth()]}-${String(
     d.getUTCDate(),
   ).padStart(2, "0")}`;
-}
-
-/**
- * Strip "files changed" sections from PR body text to prevent duplication.
- * Returns the cleaned body and whether a section was found.
- */
-function stripFilesListSection(body: string): {
-  clean: string;
-  hadSection: boolean;
-} {
-  const regex = /^#{1,3}\s*files changed[^\n]*\n(?:- .*\n?)+/im;
-  const had = regex.test(body);
-  return { clean: body.replace(regex, "").trim(), hadSection: had };
 }
 
 /**
@@ -244,29 +230,34 @@ export async function buildRepoPromptUrl(
 }
 
 // --------------------------------------------------------------------------------
-// NEW OVERLOADS (place *above* the implementation)
+// buildRepoPromptText: Main implementation
 // --------------------------------------------------------------------------------
+export async function buildRepoPromptText(
+  pull: PullWithBranch,
+  diffOptions: DiffOptions = {},
+  mode: PromptMode,
+  endpoint: Endpoint | undefined,
+  meta: ResolvedPullMeta
 ): Promise<{ promptText: string; blocks: PromptBlock[] }> {
   if (!meta) {
     throw new Error(
       "ResolvedPullMeta (meta) is required for buildRepoPromptText.",
     );
   }
-  const diffOptionsIn = diffOptions;
-  const modeIn = mode;
-  const endpointIn = endpoint;
-  const metaIn = meta;
-  //     "ResolvedPullMeta (meta) is required for buildRepoPromptText.",
-  //   );
-  // }
-  // finalPrBodyForBlock is no longer needed as originalPrBody is used directly for PR_DETAILS
-  // and stripFilesListSection is removed.
-  // Since meta is non-optional in the signature, this check can be removed if TypeScript strictness is relied upon.
-  // For robustness against potential undefined pass-through from JS, it can be kept.
-  // Given the plan to make meta mandatory, we assume it's always provided.
+
+  // Implementation begins
+  let mainTemplateString: string;
+  let tplMeta: any;
+  const userTemplateString: string | undefined = undefined;
+  const allPromptBlocks: PromptBlock[] = [];
+  const initiallySelectedBlocks: PromptBlock[] = [];
+  const embeddedDiffStrings: string[] = [];
+  const originalPrBody = pull.body ?? "";
 
   const { owner, repo, branch, rootPath } = meta;
-  const token = endpoint?.auth; // Correctly uses the direct 'endpoint' parameter
+  const token = endpoint?.auth;
+
+  // Template selection
   if (userTemplateString !== undefined && userTemplateString !== null) {
     mainTemplateString = userTemplateString;
     tplMeta = templates.analyseTemplate(userTemplateString);
@@ -278,11 +269,8 @@ export async function buildRepoPromptUrl(
     mainTemplateString = defaultTemplate.body;
     tplMeta = defaultTemplate.meta;
   }
-  // mainTemplateString and tplMeta are now set based on user settings or fallback.
 
   // --- Block Fetching Logic (1. Comments, 2. Full PR Diff, 3. Last Commit Diff, 4. Specific Commits Diffs) ---
-  // This logic remains largely the same, pushing to `allPromptBlocks` and `initiallySelectedBlocks`
-  // ... (existing block fetching logic here, ensuring `initiallySelectedBlocks` is populated correctly) ...
   // 1. Comments, Reviews, Threads (if requested)
   if (diffOptions.includeComments) {
     if (endpoint) {
@@ -298,9 +286,6 @@ export async function buildRepoPromptUrl(
         if (mode !== "adjust-pr") {
           // Example: comments not initially selected for adjust-pr
           // Potentially add to initiallySelectedBlocks for other modes if desired
-          // For now, let's assume they are generally *not* part of DIFF_CONTENT by default
-          // but are available in `allPromptBlocks` for the UI to pick.
-          // If they *should* be in DIFF_CONTENT, push them to initiallySelectedBlocks here.
         }
       });
     } else {
@@ -406,70 +391,23 @@ export async function buildRepoPromptUrl(
       }
     }
   }
-  // --- End of Block Fetching Logic ---
 
+  // FILES_LIST slot
   let filesListString = "";
-
   const shouldPopulateFilesListSlot =
-    tplMeta.expectsFilesList &&
-    meta.files &&
-    meta.files.length > 0;
-
+    tplMeta.expectsFilesList && meta.files && meta.files.length > 0;
   if (shouldPopulateFilesListSlot) {
     const filesListContent = meta.files.map((f) => `- ${f}`).join("\n");
     filesListString = `### files changed (${meta.files.length})\n${filesListContent}`;
   }
 
-  // 0. PR Details Block (always first, always initially selected)
+  // PR Details Block (always first, always initially selected)
   const prDetailsCommentBody = originalPrBody;
-
   const prDetailsBlock: CommentBlockInput = {
     id: `pr-details-${pull.id}`,
     kind: "comment",
     header: `### PR #${pull.number} DETAILS: ${pull.title}`,
     commentBody: prDetailsCommentBody,
-    author: pull.author?.name ?? "unknown",
-    authorAvatarUrl: pull.author?.avatarUrl,
-    timestamp: pull.createdAt,
-        embeddedDiffStrings.push(formatPromptBlock(block)); // ADDED: Collect for DIFF_CONTENT
-      }
-    }
-  }
-  // --- End of Block Fetching Logic ---
-
-  let filesListString = "";
-  // let finalPrBodyForBlock = originalPrBody; // REMOVED - originalPrBody used directly
-
-  // Populate FILES_LIST slot if template expects it, files exist.
-  // No longer conditional on hasEmbeddedDiff or includePr.
-  // const hasEmbeddedDiff = embeddedDiffStrings.length > 0; // REMOVED
-  const shouldPopulateFilesListSlot =
-    tplMeta.expectsFilesList &&
-    meta.files &&
-    meta.files.length > 0;
-    // && !hasEmbeddedDiff; // REMOVED Condition
-
-  if (shouldPopulateFilesListSlot) {
-    // const { clean } = stripFilesListSection(originalPrBody); // REMOVED
-    // finalPrBodyForBlock = clean; // REMOVED
-    const filesListContent = meta.files.map((f) => `- ${f}`).join("\n");
-    filesListString = `### files changed (${meta.files.length})\n${filesListContent}`;
-  }
-  // If not populating filesListSlot, finalPrBodyForBlock remains originalPrBody, // COMMENT OBSOLETE
-  // and filesListString remains empty.
-
-  // 0. PR Details Block (always first, always initially selected)
-  // let prDetailsCommentBody = finalPrBodyForBlock; // MODIFIED: use originalPrBody
-  // if (hasEmbeddedDiff) { // REMOVED
-  //   prDetailsCommentBody += "\n\n" + embeddedDiffStrings.join("\n\n"); // REMOVED
-  // }
-  const prDetailsCommentBody = originalPrBody; // PR body is now verbatim
-
-  const prDetailsBlock: CommentBlockInput = {
-    id: `pr-details-${pull.id}`,
-    kind: "comment",
-    header: `### PR #${pull.number} DETAILS: ${pull.title}`,
-    commentBody: prDetailsCommentBody, // Use the original PR body
     author: pull.author?.name ?? "unknown",
     authorAvatarUrl: pull.author?.avatarUrl,
     timestamp: pull.createdAt,
@@ -485,32 +423,28 @@ export async function buildRepoPromptUrl(
   ].join("\n");
 
   const prDetailsString = formatPromptBlock(prDetailsBlock);
+  const diffContentString = embeddedDiffStrings.join("\n\n").trim();
+  const linkString = `🔗 ${pull.url.includes("/pull/") ? pull.url : `https://github.com/${owner}/${repo}/pull/${pull.number}`}`;
+  const prDetailsContentForBlockToken = tplMeta.expectsPrDetails
+    ? ""
+    : prDetailsString;
 
-const diffContentString = embeddedDiffStrings.join("\n\n").trim();
+  const allSlots = {
+    SETUP: setupString,
+    PR_DETAILS: prDetailsString,
+    FILES_LIST: filesListString,
+    DIFF_CONTENT: diffContentString,
+    LINK: linkString,
+    prDetailsBlock: prDetailsContentForBlockToken,
+  };
 
-const linkString = `🔗 ${pull.url.includes("/pull/") ? pull.url : `https://github.com/${owner}/${repo}/pull/${pull.number}`}`;
+  const isStandardTemplate =
+    tplMeta.expectsSetup &&
+    (tplMeta.expectsPrDetails || tplMeta.expectsPrDetailsBlock) &&
+    tplMeta.expectsDiffContent &&
+    tplMeta.expectsLink;
 
-const prDetailsContentForBlockToken = tplMeta.expectsPrDetails
-  ? ""
-  : prDetailsString;
-
-const allSlots = {
-  SETUP: setupString,
-  PR_DETAILS: prDetailsString,
-  FILES_LIST: filesListString,
-  DIFF_CONTENT: diffContentString,
-  LINK: linkString,
-  prDetailsBlock: prDetailsContentForBlockToken,
-};
-
-const isStandardTemplate =
-  tplMeta.expectsSetup &&
-  (tplMeta.expectsPrDetails || tplMeta.expectsPrDetailsBlock) &&
-  tplMeta.expectsDiffContent &&
-  tplMeta.expectsLink;
-
-let promptText: string;
-
+  let promptText: string;
   if (isStandardTemplate) {
     // For standard templates, render with all slots and use the result directly.
     // renderTemplate will clean up any unused tokens or empty lines.
@@ -520,10 +454,8 @@ let promptText: string;
   } else {
     // For non-standard templates (fragments), build the prompt structurally.
     const promptSections = [];
-
     // Always include SETUP section header
     promptSections.push(`## SETUP\n${setupString}`);
-
     // Render the user's template fragment with content-specific slots.
     // Exclude SETUP and LINK from this specific render pass, as they are added structurally.
     const slotsForUserFragment = {
@@ -541,17 +473,14 @@ let promptText: string;
       { removeMarker: ["FILES_LIST"] },
     );
     promptSections.push(userFragmentRendered);
-
     // Append PR details if the user's custom template fragment didn't explicitly include {{PR_DETAILS}} or {{prDetailsBlock}}
     const userHandledPrDetails =
       tplMeta.expectsPrDetails || tplMeta.expectsPrDetailsBlock;
     if (!userHandledPrDetails) {
       promptSections.push(prDetailsString);
     }
-
     // Always include LINK section
     promptSections.push(linkString);
-
     promptText = promptSections.join("\n\n");
   }
 

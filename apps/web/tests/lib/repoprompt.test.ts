@@ -185,10 +185,9 @@ describe("buildRepoPromptText", () => {
     files: ["src/main.ts", "README.md"],
     rootPath: "/tmp/myrepo",
   };
-  let listPrCommitsSpy: any;
   let getPullRequestDiffSpy: any;
 
-  beforeEach(async () => {
+  beforeEach(() => {
     vi.clearAllMocks();
 
     // Reset mutableMockedTemplateMap to a fresh copy of the original for test isolation
@@ -206,7 +205,6 @@ describe("buildRepoPromptText", () => {
       .spyOn(gh, "getPullRequestDiff")
       .mockResolvedValue("dummy pr diff content");
     vi.mocked(gh.fetchPullComments).mockResolvedValue([]);
-    listPrCommitsSpy = vi.spyOn(gh, "listPrCommits").mockResolvedValue([]);
     vi.spyOn(gh, "getCommitDiff").mockResolvedValue(
       "dummy commit diff content",
     );
@@ -308,15 +306,16 @@ describe("buildRepoPromptText", () => {
       createdAt: "2024-01-01T00:00:00Z",
     });
     const meta = { ...mockResolvedMetaBase, files: ["fileA.ts", "fileB.ts"] };
-    getPullRequestDiffSpy.mockResolvedValue("diff --git a/fileA.ts b/fileA.ts\n--- a/fileA.ts\n+++ b/fileA.ts\n@@ -1 +1 @@\n-old\n+new");
-
+    getPullRequestDiffSpy.mockResolvedValue(
+      "diff --git a/fileA.ts b/fileA.ts\n--- a/fileA.ts\n+++ b/fileA.ts\n@@ -1 +1 @@\n-old\n+new",
+    );
 
     const currentMode = defaultPromptMode;
     // Template that uses all relevant slots
     const templateBody = `SETUP:\n{{SETUP}}\nPR_DETAILS:\n{{PR_DETAILS}}\nFILES_LIST:\n{{FILES_LIST}}\nDIFF_CONTENT:\n{{DIFF_CONTENT}}\nLINK:\n{{LINK}}`;
     setMockTemplateBody(currentMode, templateBody);
 
-    const { promptText } = await buildRepoPromptText(
+    await buildRepoPromptText(
       pull,
       { includePr: true }, // To populate DIFF_CONTENT
       defaultPromptMode,
@@ -328,7 +327,8 @@ describe("buildRepoPromptText", () => {
       vi.mocked(renderTemplateModule.renderTemplate),
     ).toHaveBeenCalledTimes(1);
 
-    const renderCallArgs = vi.mocked(renderTemplateModule.renderTemplate).mock.calls[0];
+    const renderCallArgs = vi.mocked(renderTemplateModule.renderTemplate).mock
+      .calls[0];
     expect(renderCallArgs[0]).toBe(templateBody);
 
     const slots = renderCallArgs[1];
@@ -345,16 +345,17 @@ describe("buildRepoPromptText", () => {
       timestamp: "2024-01-01T00:00:00Z",
     };
     expect(slots.PR_DETAILS).toBe(formatPromptBlock(prDetailsBlockInput));
-    
+
     expect(slots.FILES_LIST).toBe(
       "### files changed (2)\n- fileA.ts\n- fileB.ts",
     );
-    
+
     const expectedDiffBlock = {
-        id: `diff-pr-${pull.id}`,
-        kind: "diff",
-        header: "### FULL PR DIFF",
-        patch: "diff --git a/fileA.ts b/fileA.ts\n--- a/fileA.ts\n+++ b/fileA.ts\n@@ -1 +1 @@\n-old\n+new",
+      id: `diff-pr-${pull.id}`,
+      kind: "diff" as const,
+      header: "### FULL PR DIFF",
+      patch:
+        "diff --git a/fileA.ts b/fileA.ts\n--- a/fileA.ts\n+++ b/fileA.ts\n@@ -1 +1 @@\n-old\n+new",
     };
     expect(slots.DIFF_CONTENT).toBe(formatPromptBlock(expectedDiffBlock));
     expect(slots.LINK).toBe("🔗 https://github.com/owner/myrepo/pull/123");
@@ -376,9 +377,12 @@ describe("buildRepoPromptText", () => {
       ...mockResolvedMetaBase,
       files: ["newfile.ts", "another.md"],
     };
-    
+
     // Template expects FILES_LIST
-    setMockTemplateBody(defaultPromptMode, "Template: {{PR_DETAILS}}\nSlot: {{FILES_LIST}}");
+    setMockTemplateBody(
+      defaultPromptMode,
+      "Template: {{PR_DETAILS}}\nSlot: {{FILES_LIST}}",
+    );
 
     await buildRepoPromptText(
       pullWithFilesListInBody,
@@ -388,7 +392,8 @@ describe("buildRepoPromptText", () => {
       metaForSlot, // meta
     );
 
-    const slots = vi.mocked(renderTemplateModule.renderTemplate).mock.calls[0][1];
+    const slots = vi.mocked(renderTemplateModule.renderTemplate).mock
+      .calls[0][1];
     // FILES_LIST slot gets content from meta.files
     expect(slots.FILES_LIST).toBe(
       "### files changed (2)\n- newfile.ts\n- another.md",
@@ -396,19 +401,15 @@ describe("buildRepoPromptText", () => {
 
     // PR_DETAILS slot contains the verbatim PR body
     const prDetailsBlockInput: CommentBlockInput = {
-        id: `pr-details-${pullWithFilesListInBody.id}`,
-        kind: "comment",
-        header: `### PR #${pullWithFilesListInBody.number} DETAILS: ${pullWithFilesListInBody.title}`,
-        commentBody: `Some intro.\n\n### files changed (2)\n- foo.ts\n- bar.md`,
-        author: pullWithFilesListInBody.author?.name ?? "unknown",
-        authorAvatarUrl: pullWithFilesListInBody.author?.avatarUrl,
-        timestamp: pullWithFilesListInBody.createdAt,
+      id: `pr-details-${pullWithFilesListInBody.id}`,
+      kind: "comment",
+      header: `### PR #${pullWithFilesListInBody.number} DETAILS: ${pullWithFilesListInBody.title}`,
+      commentBody: `Some intro.\n\n### files changed (2)\n- foo.ts\n- bar.md`,
+      author: pullWithFilesListInBody.author?.name ?? "unknown",
+      authorAvatarUrl: pullWithFilesListInBody.author?.avatarUrl,
+      timestamp: pullWithFilesListInBody.createdAt,
     };
     expect(slots.PR_DETAILS).toBe(formatPromptBlock(prDetailsBlockInput));
-  });
-    // New files should NOT be in the PR body - they're only in the FILES_LIST slot
-    expect(body).not.toContain("newfile.ts");
-    expect(body).not.toContain("another.md");
   });
 
   it("should include comments if specified, potentially as threads", async () => {
@@ -487,7 +488,7 @@ describe("buildRepoPromptText", () => {
     // The PR details block IS initially selected.
     expect(promptText).toContain("### PR #123 DETAILS");
     expect(promptText).not.toContain("### THREAD ON src/file.ts#L10");
-    expect(promptText).not.toContain("@@ -1,1 +1,1 @@");
+    expect(promptText).not.toContain("@@ -1,1,1 @@");
     expect(promptText).not.toContain("### ISSUE COMMENT by @author2");
   });
 

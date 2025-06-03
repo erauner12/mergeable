@@ -253,7 +253,7 @@ describe("PromptCopyDialog with FileDiffPicker integration", () => {
     // We check that buildClipboardPayloadSpy was called with correct selected files.
     // The raw diff content itself will be part of copiedText.
     // For example, if file1.txt was selected, its diff content should be in copiedText.
-    const { patches: allPatchesData } =
+    const allPatchesData =
       DiffUtils.splitUnifiedDiff(SIMPLE_DIFF_PATCH);
     const expectedDiffContentForFile1 =
       allPatchesData["file1.txt"].patch.trim();
@@ -336,7 +336,7 @@ describe("PromptCopyDialog with FileDiffPicker integration", () => {
     const copiedText = mockCopyToClipboard.mock.calls[0][0];
     expect(copiedText).toContain("### PR Diff\n"); // Header should be prepended, followed by payload
     // The payload part should be the raw diff of file1.txt
-    const { patches: allPatchesData } =
+    const allPatchesData =
       DiffUtils.splitUnifiedDiff(SIMPLE_DIFF_PATCH);
     const expectedRawDiffContent = allPatchesData["file1.txt"].patch.trim();
     expect(copiedText).toContain(expectedRawDiffContent);
@@ -388,7 +388,7 @@ describe("PromptCopyDialog with FileDiffPicker integration", () => {
       // buildClipboardPayloadSpy was mocked to return "PAYLOAD_FOR_ONE_FILE_RENDER"
       // This should now be actual raw diff content.
       // Let's get the expected raw diff for file1.txt
-      const { patches: allPatchesData } =
+      const allPatchesData =
         DiffUtils.splitUnifiedDiff(SIMPLE_DIFF_PATCH);
       const expectedRawDiffForFile1 = allPatchesData["file1.txt"].patch.trim();
       // Update the spy's return value for this specific scenario
@@ -444,7 +444,7 @@ describe("PromptCopyDialog with FileDiffPicker integration", () => {
     );
     // .mockReturnValue("PICKED_FILES_PAYLOAD"); // Old mock
     // The actual payload for one file (e.g., file1.txt)
-    const { patches: allPatchesData } =
+    const allPatchesData =
       DiffUtils.splitUnifiedDiff(SIMPLE_DIFF_PATCH);
     const expectedRawDiffForFile1 = allPatchesData["file1.txt"].patch.trim();
     buildClipboardPayloadSpy.mockReturnValue(expectedRawDiffForFile1);

@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { splitUnifiedDiff, buildClipboardPayload, type PatchFileMetadata } from "../../../src/lib/github/diffUtils"; // Corrected path
+import { splitUnifiedDiff, buildClipboardPayload } from "../../../src/lib/github/diffUtils"; // Corrected path
 
 const SIMPLE_DIFF_CONTENT = `diff --git a/a.txt b/a.txt
 index 0000000..1111111 100644

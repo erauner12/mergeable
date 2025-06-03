@@ -6,17 +6,19 @@ import { toggleStar } from "../lib/mutations";
 import { useConnections, useStars } from "../lib/queries";
 import {
   buildRepoPromptText,
-  buildRepoPromptUrl,
+  buildRepoPromptUrl, // Added PromptMode
+  defaultPromptMode,
   logRepoPromptCall,
-  type PromptBlock, // Updated from DiffBlockInput
   type DiffOptions,
   type LaunchMode,
+  type PromptBlock,
+  type PromptMode,
   type ResolvedPullMeta,
 } from "../lib/repoprompt";
 import { isDiffBlock } from "../lib/repoprompt.guards";
 import { computeSize } from "../lib/size";
 import CopyToClipboardIcon from "./CopyToClipboardIcon";
-import DiffPickerDialog from "./DiffPickerDialog";
+import DiffPickerDialog, { type DiffPickerResult } from "./DiffPickerDialog"; // Updated import
 import IconWithTooltip from "./IconWithTooltip";
 import PromptCopyDialog from "./PromptCopyDialog";
 import styles from "./PullRow.module.scss";
@@ -55,7 +57,11 @@ export default function PullRow({ pull, sizes }: PullRowProps) {
     resolvedMeta?: ResolvedPullMeta;
   }>({ isOpen: false, initialPromptText: "", blocks: [], initialSelectedBlockIds: new Set(), prTitle: "", repoPromptUrl: undefined, resolvedMeta: undefined });
 
-  const handleLaunch = async (diffOpts?: DiffOptions) => {
+  const handleLaunch = async (
+    diffOpts?: DiffOptions,
+    mode: PromptMode = defaultPromptMode,
+  ) => {
+    // Added mode parameter
     try {
       const currentConn = connections?.find((c) => c.id === pull.connection);
       let endpoint: Endpoint | undefined = undefined;
@@ -80,23 +86,31 @@ export default function PullRow({ pull, sizes }: PullRowProps) {
       // window.open(repoPromptUrl, "_blank");
 
       // 3. Build prompt text and blocks using resolved metadata
-      const { promptText: generatedInitialPromptText, blocks: allPromptBlocks } = await buildRepoPromptText(
+      const {
+        promptText: generatedInitialPromptText,
+        blocks: allPromptBlocks,
+      } = await buildRepoPromptText(
         pull,
         diffOpts,
+        mode, // Pass mode
         endpoint,
         resolvedMeta,
       );
 
       // Determine initially selected block IDs for PromptCopyDialog
       const newInitialSelectedBlockIds = new Set<string>();
-      allPromptBlocks.forEach(block => {
-        if (block.id.startsWith('pr-details')) { // PR details always selected
+      allPromptBlocks.forEach((block) => {
+        if (block.id.startsWith("pr-details")) {
+          // PR details always selected
           newInitialSelectedBlockIds.add(block.id);
         } else if (isDiffBlock(block)) {
-          if (diffOpts?.includePr && block.id.startsWith('diff-pr')) {
+          if (diffOpts?.includePr && block.id.startsWith("diff-pr")) {
             newInitialSelectedBlockIds.add(block.id);
           }
-          if (diffOpts?.includeLastCommit && block.id.startsWith('diff-last-commit')) {
+          if (
+            diffOpts?.includeLastCommit &&
+            block.id.startsWith("diff-last-commit")
+          ) {
             newInitialSelectedBlockIds.add(block.id);
           }
           // Add logic for specific commits if that feature is re-enabled for selection
@@ -104,7 +118,6 @@ export default function PullRow({ pull, sizes }: PullRowProps) {
         // Comment blocks (from includeComments) are not initially selected for the prompt text by default
         // but will be available in the dialog.
       });
-
 
       // 4. Set state to open the PromptCopyDialog
       setPromptCopyState({
@@ -118,7 +131,7 @@ export default function PullRow({ pull, sizes }: PullRowProps) {
       });
 
       // 5. Log the call - REMOVED (will be done via onOpenRepoPrompt callback)
-      // logRepoPromptCall({ ... });
+      // logRepoPromptCall({ ... }); // Will be called from PromptCopyDialog's onOpenRepoPrompt
     } catch (err) {
       console.error("Failed to build RepoPrompt link or prompt text:", err);
       // Optional: Show a toast message to the user
@@ -287,9 +300,13 @@ export default function PullRow({ pull, sizes }: PullRowProps) {
       {/* 🚀 Render DiffPickerDialog */}
       <DiffPickerDialog
         isOpen={pickerOpen}
-        onConfirm={(opts: DiffOptions) => {
+        onConfirm={({ diffOpts, mode }: DiffPickerResult) => {
+          // Destructure diffOpts and mode
           setPickerOpen(false);
-          void handleLaunch(opts); // Pass selected options to handleLaunch
+          // Note: currentLaunchMode is set by the click handlers for the icons.
+          // If we want mode to influence launchMode, that logic would be here or in handleLaunch.
+          // For now, launchMode remains determined by which icon was clicked.
+          void handleLaunch(diffOpts, mode); // Pass selected options and mode to handleLaunch
         }}
         onCancel={() => setPickerOpen(false)}
         prTitle={pull.title} // Pass PR title to DiffPickerDialog
@@ -302,9 +319,12 @@ export default function PullRow({ pull, sizes }: PullRowProps) {
         initialSelectedBlockIds={promptCopyState.initialSelectedBlockIds}
         prTitle={promptCopyState.prTitle}
         repoPromptUrl={promptCopyState.repoPromptUrl}
-        onOpenRepoPrompt={(selectedText) => { // Receive selectedText
+        onOpenRepoPrompt={(selectedText) => {
+          // Receive selectedText
           if (!promptCopyState.resolvedMeta) {
-            console.error("Resolved meta not available for logging RepoPrompt call");
+            console.error(
+              "Resolved meta not available for logging RepoPrompt call",
+            );
             return;
           }
           const m = promptCopyState.resolvedMeta;
@@ -315,9 +335,10 @@ export default function PullRow({ pull, sizes }: PullRowProps) {
             files: m.files,
             flags: {
               focus: true,
-              ephemeral: currentLaunchMode === 'folder',
+              ephemeral: currentLaunchMode === "folder",
             },
-            promptPreview: // Use selectedText for preview
+            // Use selectedText for preview
+            promptPreview:
               selectedText.length > 120
                 ? `${selectedText.slice(0, 120)}…`
                 : selectedText,

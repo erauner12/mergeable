@@ -25,11 +25,12 @@ A standard template **must include all** of the following tokens, typically with
 
 4.  `{{DIFF_CONTENT}}`:
     *   **Content**: The actual diff content (full PR diff, commit diffs, etc., based on selections). This may be an empty string if no diffs are requested/available. `renderTemplate.ts` will remove the line if the token is empty.
-    *   **Heading**: The diff blocks themselves usually carry `### XXX DIFF` headers, so no additional heading is typically needed in the template around `{{DIFF_CONTENT}}` itself, but it should be placed logically.
+    *   **Heading**: The template **must** include its own heading for this section (e.g., `### diff`). The content injected into `{{DIFF_CONTENT}}` itself (e.g., from `formatPromptBlock`) may also contain its own headers (like `### FULL PR DIFF`).
+    *   ❗️**Important**: Never embed raw diffs (e.g., `diff --git ...`) directly into the template. Always use the `{{DIFF_CONTENT}}` token to ensure diffs are dynamically injected.
 
 5.  `{{LINK}}`:
     *   **Content**: A direct link to the pull request on the SCM platform (e.g., GitHub).
-    *   **Heading**: No specific heading is required by the system for this token, but it's often placed at the end.
+    *   **Heading**: No specific heading is required by the system for this token, but it's often placed at the end, after the diff section.
 
 **Note on Block Separation**: Blocks of content generated to fill these tokens (e.g., multiple diffs within `{{DIFF_CONTENT}}`, or when combining multiple selected items in the UI) are typically separated by a double newline. This standard separator is defined as `SECTION_SEPARATOR` in `apps/web/src/lib/utils/promptFormat.ts`. While `renderTemplate.ts` includes logic to normalize excessive newlines, custom templates or manual prompt construction should ideally respect this convention for clarity and consistency.
 

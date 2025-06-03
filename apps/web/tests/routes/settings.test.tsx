@@ -65,6 +65,26 @@ vi.mock("../../src/lib/toaster", async (importOriginal) => {
 // Track template overrides with proper typing
 const templateOverrides: Partial<Record<PromptMode, string>> = {};
 
+// Helper to create a standard mock template body string
+const createStandardMockBody = (taskContent: string, modeName: string) => `## SETUP
+\`\`\`bash
+{{SETUP}}
+\`\`\`
+
+### TASK
+${taskContent} for ${modeName}
+
+### PR details
+{{PR_DETAILS}}
+
+### files changed
+{{FILES_LIST}}
+
+### diff
+{{DIFF_CONTENT}}
+
+{{LINK}}`;
+
 describe("Settings Page - Prompt Template Editor", () => {
   let queryClient: QueryClient;
   let getPromptTemplateSpy: any;
@@ -76,21 +96,22 @@ describe("Settings Page - Prompt Template Editor", () => {
     });
 
     // ADD: Configure template bodies for this test suite using the shared mock helper
+    // Use the helper to create standard template bodies
     setMockTemplateBody(
       "implement",
-      "Default Implement MD Template For Settings Page",
+      createStandardMockBody("Default Implement Task", "Implement Changes"),
     );
     setMockTemplateBody(
       "review",
-      "Default Review MD Template For Settings Page",
+      createStandardMockBody("Default Review Task", "Review Code"),
     );
     setMockTemplateBody(
       "adjust-pr",
-      "Default Adjust PR Template For Settings Page",
+      createStandardMockBody("Default Adjust PR Task", "Adjust PR Description"),
     );
     setMockTemplateBody(
       "respond",
-      "Default Respond MD Template For Settings Page",
+      createStandardMockBody("Default Respond Task", "Respond to Comments"),
     );
 
     // getPromptTemplate will now try DB first, then fall back to (mocked) templateMap.

@@ -246,79 +246,27 @@ export async function buildRepoPromptUrl(
 // --------------------------------------------------------------------------------
 // NEW OVERLOADS (place *above* the implementation)
 // --------------------------------------------------------------------------------
-export async function buildRepoPromptText(
-  pull: PullWithBranch,
-  diffOptions?: DiffOptions,
-  endpoint?: Endpoint,
-  meta?: ResolvedPullMeta,
-): Promise<{ promptText: string; blocks: PromptBlock[] }>;
-
-export async function buildRepoPromptText(
-  pull: PullWithBranch,
-  diffOptions: DiffOptions | undefined,
-  mode: PromptMode,
-  endpoint?: Endpoint,
-  meta?: ResolvedPullMeta,
-): Promise<{ promptText: string; blocks: PromptBlock[] }>;
-
-// --------------------------------------------------------------------------------
-// SINGLE IMPLEMENTATION
-// --------------------------------------------------------------------------------
-export async function buildRepoPromptText(
-  pull: PullWithBranch,
-  diffOptionsArg?: DiffOptions,
-  modeOrEndpoint?: PromptMode | Endpoint,
-  endpointOrMeta?: Endpoint | ResolvedPullMeta,
-  maybeMeta?: ResolvedPullMeta,
 ): Promise<{ promptText: string; blocks: PromptBlock[] }> {
-  // --- argument juggling (no changes) ---
-  let mode: PromptMode = defaultPromptMode;
-  let endpoint: Endpoint | undefined;
-  let meta: ResolvedPullMeta | undefined;
-  const diffOptions: DiffOptions = diffOptionsArg || {};
-
-  if (diffOptions.includePr && diffOptions.includeLastCommit) {
-    diffOptions.includeLastCommit = false;
-  }
-
-  if (
-    typeof modeOrEndpoint === "string" &&
-    (modeOrEndpoint === "implement" ||
-      modeOrEndpoint === "review" ||
-      modeOrEndpoint === "adjust-pr" ||
-      modeOrEndpoint === "respond")
-  ) {
-    mode = modeOrEndpoint as PromptMode;
-    endpoint = endpointOrMeta as Endpoint | undefined;
-    meta = maybeMeta;
-  } else {
-    endpoint = modeOrEndpoint; // Cast to Endpoint | undefined
-    meta = endpointOrMeta as ResolvedPullMeta | undefined;
-  }
-
   if (!meta) {
     throw new Error(
-      "ResolvedPullMeta (meta) is required for buildRepoPromptText. Legacy callers might need updating or meta resolution logic here.",
+      "ResolvedPullMeta (meta) is required for buildRepoPromptText.",
     );
   }
+  const diffOptionsIn = diffOptions;
+  const modeIn = mode;
+  const endpointIn = endpoint;
+  const metaIn = meta;
+  //     "ResolvedPullMeta (meta) is required for buildRepoPromptText.",
+  //   );
+  // }
+  // finalPrBodyForBlock is no longer needed as originalPrBody is used directly for PR_DETAILS
+  // and stripFilesListSection is removed.
+  // Since meta is non-optional in the signature, this check can be removed if TypeScript strictness is relied upon.
+  // For robustness against potential undefined pass-through from JS, it can be kept.
+  // Given the plan to make meta mandatory, we assume it's always provided.
 
   const { owner, repo, branch, rootPath } = meta;
-  const token = endpoint?.auth;
-
-  const allPromptBlocks: PromptBlock[] = [];
-  // Ensure to use pushUnique when adding to allPromptBlocks to prevent duplicates if an ID is accidentally processed multiple times.
-  // `initiallySelectedBlocks` will be used to determine content for PR_DETAILS and DIFF_CONTENT slots
-  const initiallySelectedBlocks: PromptBlock[] = [];
-  const embeddedDiffStrings: string[] = []; // NEW: To collect diff content
-
-  // --- Determine PR Body and Files List ---
-  const originalPrBody = pull.body?.trim() || "_No description provided._";
-
-  let mainTemplateString: string;
-  let tplMeta: templates.TemplateMeta;
-
-  const userTemplateString = await settings.getPromptTemplate(mode);
-
+  const token = endpoint?.auth; // Correctly uses the direct 'endpoint' parameter
   if (userTemplateString !== undefined && userTemplateString !== null) {
     mainTemplateString = userTemplateString;
     tplMeta = templates.analyseTemplate(userTemplateString);
@@ -377,8 +325,7 @@ export async function buildRepoPromptText(
         patch: prDiff,
       };
       pushUnique(allPromptBlocks, block, (b) => b.id);
-      // pushUnique(initiallySelectedBlocks, block, (b) => b.id); // REMOVED
-      embeddedDiffStrings.push(formatPromptBlock(block)); // NEW
+      embeddedDiffStrings.push(formatPromptBlock(block));
     }
   }
 
@@ -414,8 +361,7 @@ export async function buildRepoPromptText(
             patch: lastCommitDiff,
           };
           pushUnique(allPromptBlocks, block, (b) => b.id);
-          // pushUnique(initiallySelectedBlocks, block, (b) => b.id); // REMOVED
-          embeddedDiffStrings.push(formatPromptBlock(block)); // NEW
+          embeddedDiffStrings.push(formatPromptBlock(block));
         }
       }
     }
@@ -456,44 +402,74 @@ export async function buildRepoPromptText(
           patch: commitDiff,
         };
         pushUnique(allPromptBlocks, block, (b) => b.id);
-        // pushUnique(initiallySelectedBlocks, block, (b) => b.id); // REMOVED
-        embeddedDiffStrings.push(formatPromptBlock(block)); // NEW
+        embeddedDiffStrings.push(formatPromptBlock(block));
       }
     }
   }
   // --- End of Block Fetching Logic ---
 
   let filesListString = "";
-  let finalPrBodyForBlock = originalPrBody;
 
-  // Populate FILES_LIST slot if template expects it, files exist, and no primary diff content is being generated
-  const hasEmbeddedDiff = embeddedDiffStrings.length > 0; // NEW: Check based on actual diffs collected
   const shouldPopulateFilesListSlot =
     tplMeta.expectsFilesList &&
     meta.files &&
-    meta.files.length > 0 &&
-    !hasEmbeddedDiff; // UPDATED: Use hasEmbeddedDiff
+    meta.files.length > 0;
 
   if (shouldPopulateFilesListSlot) {
-    const { clean } = stripFilesListSection(originalPrBody);
-    finalPrBodyForBlock = clean;
     const filesListContent = meta.files.map((f) => `- ${f}`).join("\n");
     filesListString = `### files changed (${meta.files.length})\n${filesListContent}`;
   }
-  // If not populating filesListSlot, finalPrBodyForBlock remains originalPrBody,
-  // and filesListString remains empty.
 
   // 0. PR Details Block (always first, always initially selected)
-  let prDetailsCommentBody = finalPrBodyForBlock;
-  if (hasEmbeddedDiff) {
-    prDetailsCommentBody += "\n\n" + embeddedDiffStrings.join("\n\n"); // NEW: Append diffs
-  }
+  const prDetailsCommentBody = originalPrBody;
 
   const prDetailsBlock: CommentBlockInput = {
     id: `pr-details-${pull.id}`,
     kind: "comment",
     header: `### PR #${pull.number} DETAILS: ${pull.title}`,
-    commentBody: prDetailsCommentBody, // Use the (potentially) augmented body
+    commentBody: prDetailsCommentBody,
+    author: pull.author?.name ?? "unknown",
+    authorAvatarUrl: pull.author?.avatarUrl,
+    timestamp: pull.createdAt,
+        embeddedDiffStrings.push(formatPromptBlock(block)); // ADDED: Collect for DIFF_CONTENT
+      }
+    }
+  }
+  // --- End of Block Fetching Logic ---
+
+  let filesListString = "";
+  // let finalPrBodyForBlock = originalPrBody; // REMOVED - originalPrBody used directly
+
+  // Populate FILES_LIST slot if template expects it, files exist.
+  // No longer conditional on hasEmbeddedDiff or includePr.
+  // const hasEmbeddedDiff = embeddedDiffStrings.length > 0; // REMOVED
+  const shouldPopulateFilesListSlot =
+    tplMeta.expectsFilesList &&
+    meta.files &&
+    meta.files.length > 0;
+    // && !hasEmbeddedDiff; // REMOVED Condition
+
+  if (shouldPopulateFilesListSlot) {
+    // const { clean } = stripFilesListSection(originalPrBody); // REMOVED
+    // finalPrBodyForBlock = clean; // REMOVED
+    const filesListContent = meta.files.map((f) => `- ${f}`).join("\n");
+    filesListString = `### files changed (${meta.files.length})\n${filesListContent}`;
+  }
+  // If not populating filesListSlot, finalPrBodyForBlock remains originalPrBody, // COMMENT OBSOLETE
+  // and filesListString remains empty.
+
+  // 0. PR Details Block (always first, always initially selected)
+  // let prDetailsCommentBody = finalPrBodyForBlock; // MODIFIED: use originalPrBody
+  // if (hasEmbeddedDiff) { // REMOVED
+  //   prDetailsCommentBody += "\n\n" + embeddedDiffStrings.join("\n\n"); // REMOVED
+  // }
+  const prDetailsCommentBody = originalPrBody; // PR body is now verbatim
+
+  const prDetailsBlock: CommentBlockInput = {
+    id: `pr-details-${pull.id}`,
+    kind: "comment",
+    header: `### PR #${pull.number} DETAILS: ${pull.title}`,
+    commentBody: prDetailsCommentBody, // Use the original PR body
     author: pull.author?.name ?? "unknown",
     authorAvatarUrl: pull.author?.avatarUrl,
     timestamp: pull.createdAt,
@@ -510,36 +486,30 @@ export async function buildRepoPromptText(
 
   const prDetailsString = formatPromptBlock(prDetailsBlock);
 
-  // const otherSelectedBlocks = initiallySelectedBlocks.filter( // REMOVED
-  //   (block) => block.id !== prDetailsBlock.id,
-  // );
-  // const diffContentString = formatListOfPromptBlocks(otherSelectedBlocks); // REMOVED
+const diffContentString = embeddedDiffStrings.join("\n\n").trim();
 
-  const linkString = `🔗 ${pull.url.includes("/pull/") ? pull.url : `https://github.com/${owner}/${repo}/pull/${pull.number}`}`;
+const linkString = `🔗 ${pull.url.includes("/pull/") ? pull.url : `https://github.com/${owner}/${repo}/pull/${pull.number}`}`;
 
-  // Define how prDetailsBlock token is handled: it gets content only if PR_DETAILS token is NOT in the template.
-  const prDetailsContentForBlockToken = tplMeta.expectsPrDetails
-    ? ""
-    : prDetailsString;
+const prDetailsContentForBlockToken = tplMeta.expectsPrDetails
+  ? ""
+  : prDetailsString;
 
-  // Define all available slots for rendering
-  const allSlots = {
-    SETUP: setupString,
-    PR_DETAILS: prDetailsString, // {{PR_DETAILS}} always gets the full PR details string
-    FILES_LIST: filesListString,
-    DIFF_CONTENT: "", // legacy – kept empty so old templates/tests that still poke for it don’t explode
-    LINK: linkString,
-    prDetailsBlock: prDetailsContentForBlockToken, // {{prDetailsBlock}} is an alternative, gets content if {{PR_DETAILS}} is absent
-  };
+const allSlots = {
+  SETUP: setupString,
+  PR_DETAILS: prDetailsString,
+  FILES_LIST: filesListString,
+  DIFF_CONTENT: diffContentString,
+  LINK: linkString,
+  prDetailsBlock: prDetailsContentForBlockToken,
+};
 
-  // Check if this is a "standard" template that handles its own structure
-  const isStandardTemplate =
-    tplMeta.expectsSetup &&
-    (tplMeta.expectsPrDetails || tplMeta.expectsPrDetailsBlock) &&
-    // tplMeta.expectsDiffContent && // This part of the condition is removed as expectsDiffContent is removed
-    tplMeta.expectsLink;
+const isStandardTemplate =
+  tplMeta.expectsSetup &&
+  (tplMeta.expectsPrDetails || tplMeta.expectsPrDetailsBlock) &&
+  tplMeta.expectsDiffContent &&
+  tplMeta.expectsLink;
 
-  let promptText: string;
+let promptText: string;
 
   if (isStandardTemplate) {
     // For standard templates, render with all slots and use the result directly.
@@ -560,7 +530,7 @@ export async function buildRepoPromptText(
       PR_DETAILS: prDetailsString,
       prDetailsBlock: prDetailsContentForBlockToken,
       FILES_LIST: filesListString,
-      DIFF_CONTENT: "", // legacy – kept empty
+      DIFF_CONTENT: diffContentString,
       // Any other custom tokens the user might have in their fragment would pass through,
       // and if not matched by renderTemplate's cleanup, would remain.
       // Or, if they are on their own line, renderTemplate cleans them.

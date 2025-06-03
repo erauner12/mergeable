@@ -13,6 +13,7 @@ export interface TemplateMeta {
   expectsLink: boolean;
   expectsPrDetails: boolean;
   expectsPrDetailsBlock: boolean;
+  expectsDiffContent: boolean;
 }
 
 export function analyseTemplate(tpl: string): TemplateMeta {
@@ -22,6 +23,7 @@ export function analyseTemplate(tpl: string): TemplateMeta {
     expectsLink: tpl.includes("{{LINK}}"),
     expectsPrDetails: tpl.includes("{{PR_DETAILS}}"),
     expectsPrDetailsBlock: tpl.includes("{{prDetailsBlock}}"),
+    expectsDiffContent: tpl.includes("{{DIFF_CONTENT}}"),
   };
 }
 

@@ -33,43 +33,6 @@ const DIFF_PLACEHOLDER_TEXT =
   "(diff content here, possibly empty if not selected for template)";
 const DIFF_TOKEN_TEXT = "{{DIFF_CONTENT}}";
 
-interface InjectResult {
-  result: string; // CHANGED from 'text' to 'result' to match existing pattern, and type from string to string
-  injected: boolean;
-}
-
-// Helper function to inject selected content into template
-function injectSelectionIntoTemplate(
-  template: string,
-  selectionToInject: string,
-): InjectResult {
-  const placeholderHit = template.includes(DIFF_PLACEHOLDER_TEXT);
-  const tokenHit = template.includes(DIFF_TOKEN_TEXT);
-
-  console.debug(
-    "[injectSelectionIntoTemplate] placeholderFound?",
-    placeholderHit || tokenHit,
-  );
-
-  if (placeholderHit || tokenHit) {
-    let result = template;
-    if (placeholderHit) {
-      result = result.replace(DIFF_PLACEHOLDER_TEXT, selectionToInject);
-    }
-    if (tokenHit) {
-      // If placeholder was already replaced, replace in the result of that
-      // If only token exists, replace in original template
-      result = result.replace(DIFF_TOKEN_TEXT, selectionToInject);
-    }
-    return {
-      injected: true,
-      result,
-    };
-  }
-  // If neither is found, return original template and indicate no injection
-  return { injected: false, result: template };
-}
-
 // Helper for copying text to clipboard
 async function copyTextToClipboard(text: string): Promise<boolean> {
   try {
@@ -321,44 +284,45 @@ export function PromptCopyDialog({
   }, [selectedDiffBlock, diffPatchData, selectedFilePaths]);
   // END ADD NEW useMemo hooks
 
-  // Refactored: Use injectSelectionIntoTemplate for prompt assembly
+  // Refactored: Use new prompt assembly logic
   const getFinalPrompt = (): string => {
     const template = initialPromptText.trim();
     const extra = userText.trim();
+    const diffSel = diffPayload?.trimEnd(); // may be '' or undefined
+    const commentSel = selectedNonDiffText?.trimEnd(); // may be '' or undefined
 
-    if (selectedIds.size > 0) {
-      // Build the selected content from non-diff blocks and diff payload
-      const selectionParts = [];
-      if (selectedNonDiffText) {
-        selectionParts.push(selectedNonDiffText);
-      }
-      if (diffPayload) {
-        selectionParts.push(diffPayload);
-      }
-      const selectionClean = joinBlocks(selectionParts).trimEnd();
+    const parts: (string | undefined)[] = [];
 
-      if (template) {
-        const { injected, result: injectedTemplate } =
-          injectSelectionIntoTemplate(template, selectionClean);
-        if (injected) {
-          // Injected selected content into the template
-          return joinBlocks(
-            [injectedTemplate, extra].filter(Boolean),
-          ).trimEnd();
-        } else {
-          // Fallback: template first, then selected content, then extra text
-          return joinBlocks(
-            [template, selectionClean, extra].filter(Boolean),
-          ).trimEnd();
+    if (template) {
+      let renderedText = template;
+      const placeholderHit = renderedText.includes(DIFF_PLACEHOLDER_TEXT);
+      const tokenHit = renderedText.includes(DIFF_TOKEN_TEXT);
+
+      if (placeholderHit || tokenHit) {
+        // Replace with diff (possibly empty string if diffSel is empty/undefined)
+        const diffToInject = diffSel ?? "";
+        if (placeholderHit) {
+          renderedText = renderedText.replace(
+            DIFF_PLACEHOLDER_TEXT,
+            diffToInject,
+          );
         }
-      } else {
-        // No template, just selected content and extra text
-        return joinBlocks([selectionClean, extra].filter(Boolean)).trimEnd();
+        // If tokenHit, ensure it's also replaced. If placeholder was already hit, operate on the modified string.
+        if (tokenHit) {
+          renderedText = renderedText.replace(DIFF_TOKEN_TEXT, diffToInject);
+        }
       }
+      parts.push(renderedText);
+      parts.push(commentSel); // Comments always appended after template
+      parts.push(extra);
     } else {
-      // No selected blocks, just template and extra text
-      return joinBlocks([template, extra].filter(Boolean)).trimEnd();
+      // No template: diff -> comments -> user text
+      parts.push(diffSel);
+      parts.push(commentSel);
+      parts.push(extra);
     }
+
+    return joinBlocks(parts.filter(Boolean) as string[]).trimEnd();
   };
 
   const nothingToSend =
@@ -404,6 +368,7 @@ export function PromptCopyDialog({
     selectedDiffBlock,
     selectedNonDiffText,
     diffPayload,
+    userText, // Add userText to dependencies since it affects getFinalPrompt
   ]);
   // DEBUG –––––––––––––––––––––––––––––––––––––––––––––––––––
 

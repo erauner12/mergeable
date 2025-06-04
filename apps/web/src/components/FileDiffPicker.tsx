@@ -117,7 +117,7 @@ export function FileDiffPicker({
             <Button
               intent={Intent.PRIMARY}
               onClick={handleConfirm}
-              text={`Copy ${numSelected} file${numSelected === 1 ? "" : "s"}`}
+              text={`Use ${numSelected} file${numSelected === 1 ? "" : "s"}`}
               disabled={numSelected === 0}
             />
           </>

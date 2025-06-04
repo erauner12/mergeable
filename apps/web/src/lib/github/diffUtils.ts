@@ -71,41 +71,27 @@ export function buildClipboardPayload(opts: {
   patches: Record<string, PatchFileMetadata>;
 }): string {
   const { selectedFiles, allFiles, patches } = opts;
-  const headerLines: string[] = [];
+  
+  const patchContents: string[] = [];
 
+  // Sort allFiles to ensure a consistent order of patches if multiple are selected
   const sortedAllFiles = [...allFiles].sort();
 
-  headerLines.push(`### files changed (${sortedAllFiles.length})`);
-
-  function getOmissionReason(meta: PatchFileMetadata | undefined): string | null {
-    if (!meta) return null;
-    if (meta.isBinary) return "binary file";
-    if (meta.lineCount > 400) return `${meta.lineCount} lines`;
-    // Show KB if byteCount is large, converting bytes to KB
-    if (meta.byteCount > 100_000) return `${Math.round(meta.byteCount / 1024)} KB`;
-    return null;
-  }
+  // getOmissionReason function is removed as it's no longer used for a header
 
   for (const filePath of sortedAllFiles) {
-    const meta = patches[filePath];
-    if (selectedFiles.has(filePath)) {
-      headerLines.push(`- ${filePath}`);
-    } else {
-      const reason = getOmissionReason(meta);
-      if (reason) {
-        headerLines.push(`- ${filePath} _(${reason} – diff omitted)_`);
-      } else {
-        headerLines.push(`- ${filePath} _(diff omitted)_`);
-      }
-    }
-  }
+    const hasFilePath = selectedFiles.has(filePath);
+    const hasPatch = patches[filePath];
 
-  const patchContents: string[] = [];
-  for (const filePath of sortedAllFiles) {
-    if (selectedFiles.has(filePath) && patches[filePath]) {
+    if (hasFilePath && hasPatch) {
+      // Ensure individual patches are trimmed before joining
       patchContents.push(patches[filePath].patch.trim());
     }
   }
 
-  return `${headerLines.join('\n')}\n\n${patchContents.join('\n')}`.trim();
+  // Join trimmed patches with a single newline.
+  // If patchContents is empty, returns "".
+  // If one patch, returns it.
+  // If multiple, joins them with a newline separator.
+  return patchContents.join("\n");
 }

@@ -1,3 +1,8 @@
+// ADD: Import the shared mock helper. Should be one of the first imports.
+import "../__mocks__/templates.mock";
+// ADD: Import utilities from the shared mock.
+import { setMockTemplateBody } from "../__mocks__/templates.mock";
+
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { db } from "../../src/lib/db";
 import type { PromptMode } from "../../src/lib/repoprompt";
@@ -8,24 +13,31 @@ import {
   keyFor,
   getBasePrompt, // For testing legacy interaction
 } from "../../src/lib/settings";
-// ADDED: Mock templateMap
+// Import * as templates will now correctly point to the mocked module
 import * as templates from "../../src/lib/templates";
+// REMOVE: import type { TemplateMeta } from "../../src/lib/templates"; // Already imported by mock or not directly used here
 
-// Mock the templateMap from templates.ts
-vi.mock("../../src/lib/templates", () => ({
-  templateMap: {
-    implement: "Implement MD Template {{SETUP}} {{PR_DETAILS}} {{DIFF_CONTENT}} {{LINK}} ### TASK FROM IMPLEMENT.MD",
-    review: "Review MD Template {{SETUP}} {{PR_DETAILS}} {{DIFF_CONTENT}} {{LINK}} ### TASK FROM REVIEW.MD",
-    "adjust-pr": "Adjust PR MD Template {{SETUP}} {{PR_DETAILS}} {{DIFF_CONTENT}} {{LINK}} ### TASK FROM ADJUST-PR.MD",
-    respond: "Respond MD Template {{SETUP}} {{PR_DETAILS}} {{DIFF_CONTENT}} {{LINK}} ### TASK FROM RESPOND.MD",
-  } as Record<PromptMode, string>,
-}));
+// REMOVE: Mock templateMap (mockTemplateBodiesForSettings and the vi.mock block)
+// const mockTemplateBodiesForSettings: Record<PromptMode, string> = {
+//   implement: "Implement MD Template {{SETUP}} {{PR_DETAILS}} {{DIFF_CONTENT}} {{LINK}} ### TASK FROM IMPLEMENT.MD",
+//   review: "Review MD Template {{SETUP}} {{PR_DETAILS}} {{DIFF_CONTENT}} {{LINK}} ### TASK FROM REVIEW.MD",
+//   "adjust-pr": "Adjust PR MD Template {{SETUP}} {{PR_DETAILS}} {{DIFF_CONTENT}} {{LINK}} ### TASK FROM ADJUST-PR.MD",
+//   respond: "Respond MD Template {{SETUP}} {{PR_DETAILS}} {{DIFF_CONTENT}} {{LINK}} ### TASK FROM RESPOND.MD",
+// };
+// vi.mock("../../src/lib/templates", async () => { ... });
 
 
-// REMOVED: Manually defined expectedDefaultPromptTemplates
-// Defaults are now sourced from the mocked templateMap.
+// Defaults are now sourced from the mocked templateMap, configured via setMockTemplateBody.
 
 describe("settings prompt template helpers", () => {
+  beforeEach(() => {
+    // Configure the template bodies for this test suite
+    setMockTemplateBody("implement", "Implement MD Template {{SETUP}} {{PR_DETAILS}} {{DIFF_CONTENT}} {{LINK}} ### TASK FROM IMPLEMENT.MD");
+    setMockTemplateBody("review", "Review MD Template {{SETUP}} {{PR_DETAILS}} {{DIFF_CONTENT}} {{LINK}} ### TASK FROM REVIEW.MD");
+    setMockTemplateBody("adjust-pr", "Adjust PR MD Template {{SETUP}} {{PR_DETAILS}} {{DIFF_CONTENT}} {{LINK}} ### TASK FROM ADJUST-PR.MD");
+    setMockTemplateBody("respond", "Respond MD Template {{SETUP}} {{PR_DETAILS}} {{DIFF_CONTENT}} {{LINK}} ### TASK FROM RESPOND.MD");
+  });
+
   afterEach(async () => {
     await db.settings.clear();
     vi.restoreAllMocks();
@@ -35,11 +47,12 @@ describe("settings prompt template helpers", () => {
     ["review" as PromptMode],
     ["adjust-pr" as PromptMode],
     ["respond" as PromptMode],
-  ])("getPromptTemplate() returns default from templateMap for %s when no custom value is set", async (mode) => {
+  ])("getPromptTemplate() returns default from templateMap.body for %s when no custom value is set", async (mode) => {
     await db.settings.clear(); // Ensure clean state
     const template = await getPromptTemplate(mode);
-    // Compare against the mocked templateMap content
-    expect(template).toBe(templates.templateMap[mode]);
+    // Compare against the mocked templateMap content (which is now dynamically generated)
+    // templates.templateMap[mode].body will correctly access the mocked value.
+    expect(template).toBe(templates.templateMap[mode].body);
   });
 
   test.each([
@@ -56,20 +69,20 @@ describe("settings prompt template helpers", () => {
   test("getPromptTemplate('implement') follows fallback chain: new key -> legacy key -> templateMap default", async () => {
     await db.settings.clear();
 
-    // 1. Nothing in DB - should return default "implement" template from templateMap
+    // 1. Nothing in DB - should return default "implement" template from templateMap.body
     let implementTemplate = await getPromptTemplate("implement");
-    expect(implementTemplate).toBe(templates.templateMap.implement);
+    // templates.templateMap.implement.body will correctly access the mocked value.
+    expect(implementTemplate).toBe(templates.templateMap.implement.body);
 
     // 2. Only legacy key ('basePromptTemplate') present
     await db.settings.clear();
     await setBasePrompt("LEGACY_IMPLEMENT_FULL_TEMPLATE_TEXT");
     implementTemplate = await getPromptTemplate("implement");
     expect(implementTemplate).toBe("LEGACY_IMPLEMENT_FULL_TEMPLATE_TEXT");
-    
-    // Also check getBasePrompt directly - it should return the legacy value or templateMap.implement
-    // Depending on its exact refined logic. For this test, we set it, so it should return it.
-    expect(await getBasePrompt()).toBe("LEGACY_IMPLEMENT_FULL_TEMPLATE_TEXT");
 
+    // Also check getBasePrompt directly - it should return the legacy value or templateMap.implement.body
+    // templates.templateMap.implement.body will correctly access the mocked value if legacy is not set.
+    expect(await getBasePrompt()).toBe("LEGACY_IMPLEMENT_FULL_TEMPLATE_TEXT");
 
     // 3. New key ('basePromptTemplate:implement') present - should override legacy
     await db.settings.clear();
@@ -80,7 +93,9 @@ describe("settings prompt template helpers", () => {
 
     // Check that the legacy key was also updated by setPromptTemplate("implement", ...)
     const legacyValueAfterNewSet = await db.settings.get("basePromptTemplate");
-    expect(legacyValueAfterNewSet?.value).toBe("NEW_IMPLEMENT_FULL_TEMPLATE_TEXT");
+    expect(legacyValueAfterNewSet?.value).toBe(
+      "NEW_IMPLEMENT_FULL_TEMPLATE_TEXT",
+    );
   });
 
   test("setPromptTemplate('implement', text) writes to both new key and legacy 'basePromptTemplate' key", async () => {

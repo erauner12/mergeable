@@ -842,6 +842,7 @@ describe("PromptCopyDialog with FileDiffPicker integration", () => {
     await act(async () => {
       fireEvent.click(screen.getByTestId("picker-confirm-1-file"));
     });
+
     await waitFor(() => {
       expect(screen.queryByText("FileDiffPickerMock")).not.toBeInTheDocument();
       // Label should update to show 1 of 2 files selected
@@ -907,5 +908,177 @@ describe("PromptCopyDialog with FileDiffPicker integration", () => {
     expect(normaliseWS(copiedText)).toBe(normaliseWS(EXPECTED_PROMPT));
 
     buildClipboardPayloadSpy.mockRestore();
+  });
+
+  // NEW TEST: Comprehensive file selection validation with debug logging verification
+  test("validates file selection debug logging and multiple selection scenarios", async () => {
+    const buildClipboardPayloadSpy = vi.spyOn(
+      DiffUtils,
+      "buildClipboardPayload",
+    );
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const consoleGroupSpy = vi
+      .spyOn(console, "groupCollapsed")
+      .mockImplementation(() => {});
+    const consoleGroupEndSpy = vi
+      .spyOn(console, "groupEnd")
+      .mockImplementation(() => {});
+
+    const { rerender } = render(
+      <PromptCopyDialog
+        isOpen={true}
+        initialPromptText={MOCK_INITIAL_PROMPT_TEXT_WITH_PR_DETAILS}
+        blocks={MOCK_BLOCKS_WITH_DIFF_NO_PR_DETAILS}
+        onClose={() => {}}
+        prTitle="Debug Test PR"
+      />,
+    );
+
+    // Verify initial debug output is logged
+    await waitFor(() => {
+      expect(consoleGroupSpy).toHaveBeenCalledWith(
+        expect.stringContaining("[PromptCopyDialog DEBUG] build context"),
+        expect.any(String),
+      );
+      expect(consoleSpy).toHaveBeenCalledWith("selectedFilePaths →", [
+        "file1.txt",
+        "file2.txt",
+      ]);
+      expect(consoleSpy).toHaveBeenCalledWith("selectedDiffBlock →", "diff-1");
+    });
+
+    // Test Scenario 1: Select only 1 file
+    act(() => {
+      fireEvent.click(screen.getByTestId("choose-files-diff-1"));
+    });
+    expect(screen.getByText("FileDiffPickerMock")).toBeInTheDocument();
+
+    act(() => {
+      fireEvent.click(screen.getByTestId("picker-confirm-1-file"));
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByText("FileDiffPickerMock")).not.toBeInTheDocument();
+      expect(screen.getByText("(1 of 2 files)")).toBeInTheDocument();
+    });
+
+    // Verify debug output shows correct file selection
+    expect(consoleSpy).toHaveBeenCalledWith("selectedFilePaths →", [
+      "file1.txt",
+    ]);
+
+    // Copy and verify buildClipboardPayload is called correctly
+    act(() => {
+      fireEvent.click(getCopyButton());
+    });
+
+    await waitFor(() => {
+      expect(mockCopyToClipboard).toHaveBeenCalled();
+    });
+
+    expect(buildClipboardPayloadSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        selectedFiles: new Set(["file1.txt"]),
+        allFiles: ["file1.txt", "file2.txt"],
+      }),
+    );
+
+    // Verify the copied content contains only file1 diff
+    const copiedText1File = mockCopyToClipboard.mock.calls[
+      mockCopyToClipboard.mock.calls.length - 1
+    ][0] as string;
+    expect(copiedText1File).toContain("content1");
+    expect(copiedText1File).not.toContain("content2");
+
+    // Test Scenario 2: Select all files again
+    act(() => {
+      fireEvent.click(screen.getByTestId("choose-files-diff-1"));
+    });
+
+    act(() => {
+      fireEvent.click(screen.getByTestId("picker-confirm-all-files"));
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByText("FileDiffPickerMock")).not.toBeInTheDocument();
+      expect(screen.getByText("(All 2 files)")).toBeInTheDocument();
+    });
+
+    // Verify debug output shows all files selected
+    expect(consoleSpy).toHaveBeenCalledWith("selectedFilePaths →", [
+      "file1.txt",
+      "file2.txt",
+    ]);
+
+    // Copy and verify buildClipboardPayload is called with all files
+    act(() => {
+      fireEvent.click(getCopyButton());
+    });
+
+    await waitFor(() => {
+      expect(mockCopyToClipboard).toHaveBeenCalled();
+    });
+
+    expect(buildClipboardPayloadSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        selectedFiles: new Set(["file1.txt", "file2.txt"]),
+        allFiles: ["file1.txt", "file2.txt"],
+      }),
+    );
+
+    // Verify the copied content contains both files' diffs
+    const copiedTextAllFiles = mockCopyToClipboard.mock.calls[
+      mockCopyToClipboard.mock.calls.length - 1
+    ][0] as string;
+    expect(copiedTextAllFiles).toContain("content1");
+    expect(copiedTextAllFiles).toContain("content2");
+
+    // Test Scenario 3: Dialog re-opening behavior
+    // Close and reopen dialog to test state reset
+    rerender(
+      <PromptCopyDialog
+        isOpen={false}
+        initialPromptText={MOCK_INITIAL_PROMPT_TEXT_WITH_PR_DETAILS}
+        blocks={MOCK_BLOCKS_WITH_DIFF_NO_PR_DETAILS}
+        onClose={() => {}}
+        prTitle="Debug Test PR"
+      />,
+    );
+
+    rerender(
+      <PromptCopyDialog
+        isOpen={true}
+        initialPromptText={MOCK_INITIAL_PROMPT_TEXT_WITH_PR_DETAILS}
+        blocks={MOCK_BLOCKS_WITH_DIFF_NO_PR_DETAILS}
+        onClose={() => {}}
+        prTitle="Debug Test PR"
+      />,
+    );
+
+    // Verify that after reopening, all files are selected by default again
+    await waitFor(() => {
+      expect(screen.getByText("(All 2 files)")).toBeInTheDocument();
+    });
+
+    // Verify debug output shows reset to all files
+    expect(consoleSpy).toHaveBeenCalledWith("selectedFilePaths →", [
+      "file1.txt",
+      "file2.txt",
+    ]);
+
+    // Verify that diffPatchData debug logging is working
+    expect(consoleSpy).toHaveBeenCalledWith(
+      "diffPatchData →",
+      expect.objectContaining({
+        allFilePaths: ["file1.txt", "file2.txt"],
+        sourceBlockId: "diff-1",
+      }),
+    );
+
+    // Clean up spies
+    buildClipboardPayloadSpy.mockRestore();
+    consoleSpy.mockRestore();
+    consoleGroupSpy.mockRestore();
+    consoleGroupEndSpy.mockRestore();
   });
 });

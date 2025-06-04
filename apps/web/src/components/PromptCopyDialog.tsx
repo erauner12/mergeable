@@ -343,6 +343,10 @@ export function PromptCopyDialog({
 
     console.log("selectedNonDiffText →", selectedNonDiffText);
 
+    // ADDED: Debug selectedFilePaths
+    console.log("selectedFilePaths →", Array.from(selectedFilePaths));
+    console.log("diffPatchData →", diffPatchData);
+
     // Calculate diffPayload inline for debugging
     let diffPayloadForDebug = "";
     if (

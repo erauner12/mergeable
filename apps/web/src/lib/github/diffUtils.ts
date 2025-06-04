@@ -71,6 +71,7 @@ export function buildClipboardPayload(opts: {
   patches: Record<string, PatchFileMetadata>;
 }): string {
   const { selectedFiles, allFiles, patches } = opts;
+  
   const patchContents: string[] = [];
 
   // Sort allFiles to ensure a consistent order of patches if multiple are selected
@@ -79,7 +80,10 @@ export function buildClipboardPayload(opts: {
   // getOmissionReason function is removed as it's no longer used for a header
 
   for (const filePath of sortedAllFiles) {
-    if (selectedFiles.has(filePath) && patches[filePath]) {
+    const hasFilePath = selectedFiles.has(filePath);
+    const hasPatch = patches[filePath];
+
+    if (hasFilePath && hasPatch) {
       // Ensure individual patches are trimmed before joining
       patchContents.push(patches[filePath].patch.trim());
     }

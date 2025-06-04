@@ -1220,9 +1220,8 @@ describe("PromptCopyDialog with FileDiffPicker integration", () => {
       id: "diff-2",
       kind: "diff",
       header: "### NEW DIFF",
-      patch: "diff --git a/newfile.txt b/newfile.txt\n--- a/newfile.txt\n+++ b/newfile.txt\n+new content",
-      author: "testuser",
-      timestamp: "2024-01-01T00:00:00Z",
+      patch:
+        "diff --git a/newfile.txt b/newfile.txt\n--- a/newfile.txt\n+++ b/newfile.txt\n+new content",
     };
 
     const blocksWithNewDiff = [...initialBlocks, newDiffBlock];

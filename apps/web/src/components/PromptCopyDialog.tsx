@@ -192,20 +192,21 @@ export function PromptCopyDialog({
         const parsedPatches = splitUnifiedDiff(diffBlock.patch);
         const allPaths = Object.keys(parsedPatches);
 
-        // Only set default file selection if we don't already have diffPatchData for this block
-        // This prevents overriding user's file selection when dialog re-renders
-        const isNewDiffBlock =
-          !diffPatchData || diffPatchData.sourceBlockId !== diffBlock.id;
+        // Use a ref or previous state comparison to avoid infinite loops
+        // Check if this is a new diff block by comparing block ID
+        setDiffPatchData((prevData) => {
+          const isNewDiffBlock = !prevData || prevData.sourceBlockId !== diffBlock.id;
+          
+          if (isNewDiffBlock) {
+            // Default to all files selected only for new diff blocks
+            setSelectedFilePaths(new Set(allPaths));
+          }
 
-        if (isNewDiffBlock) {
-          // Default to all files selected only for new diff blocks
-          setSelectedFilePaths(new Set(allPaths));
-        }
-
-        setDiffPatchData({
-          patches: parsedPatches,
-          allFilePaths: allPaths,
-          sourceBlockId: diffBlock.id,
+          return {
+            patches: parsedPatches,
+            allFilePaths: allPaths,
+            sourceBlockId: diffBlock.id,
+          };
         });
       } else {
         // Ensure reset if no diff block is found while open
@@ -214,7 +215,7 @@ export function PromptCopyDialog({
       }
     }
     // No else here, covered by the other useEffect for !isOpen which handles full reset
-  }, [isOpen, blocks, diffPatchData]);
+  }, [isOpen, blocks]);
   // END ADDED Effect
 
   // Reset userText when dialog is closed/reopened

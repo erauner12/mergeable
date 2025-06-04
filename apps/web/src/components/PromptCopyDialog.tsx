@@ -191,8 +191,17 @@ export function PromptCopyDialog({
       if (diffBlock) {
         const parsedPatches = splitUnifiedDiff(diffBlock.patch);
         const allPaths = Object.keys(parsedPatches);
-        // Ensure selectedFilePaths is set before diffPatchData to avoid race conditions in effects/memos
-        setSelectedFilePaths(new Set(allPaths)); // Default to all files selected
+
+        // Only set default file selection if we don't already have diffPatchData for this block
+        // This prevents overriding user's file selection when dialog re-renders
+        const isNewDiffBlock =
+          !diffPatchData || diffPatchData.sourceBlockId !== diffBlock.id;
+
+        if (isNewDiffBlock) {
+          // Default to all files selected only for new diff blocks
+          setSelectedFilePaths(new Set(allPaths));
+        }
+
         setDiffPatchData({
           patches: parsedPatches,
           allFilePaths: allPaths,
@@ -205,7 +214,7 @@ export function PromptCopyDialog({
       }
     }
     // No else here, covered by the other useEffect for !isOpen which handles full reset
-  }, [isOpen, blocks]);
+  }, [isOpen, blocks, diffPatchData]);
   // END ADDED Effect
 
   // Reset userText when dialog is closed/reopened

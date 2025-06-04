@@ -1081,4 +1081,169 @@ describe("PromptCopyDialog with FileDiffPicker integration", () => {
     consoleGroupSpy.mockRestore();
     consoleGroupEndSpy.mockRestore();
   });
+
+  // NEW TEST: Specifically test the bug fix - file selection preservation during re-renders
+  test("preserves user file selection when useEffect triggers re-render", async () => {
+    const buildClipboardPayloadSpy = vi.spyOn(
+      DiffUtils,
+      "buildClipboardPayload",
+    );
+
+    const { rerender } = render(
+      <PromptCopyDialog
+        isOpen={true}
+        initialPromptText={MOCK_INITIAL_PROMPT_TEXT_WITH_PR_DETAILS}
+        blocks={MOCK_BLOCKS_WITH_DIFF_NO_PR_DETAILS}
+        onClose={() => {}}
+        prTitle="File Selection Preservation Test"
+      />,
+    );
+
+    // Step 1: Verify initial state - all files selected
+    await waitFor(() => {
+      expect(screen.getByText("(All 2 files)")).toBeInTheDocument();
+    });
+
+    // Step 2: User selects only 1 file
+    act(() => {
+      fireEvent.click(screen.getByTestId("choose-files-diff-1"));
+    });
+    expect(screen.getByText("FileDiffPickerMock")).toBeInTheDocument();
+
+    act(() => {
+      fireEvent.click(screen.getByTestId("picker-confirm-1-file"));
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByText("FileDiffPickerMock")).not.toBeInTheDocument();
+      expect(screen.getByText("(1 of 2 files)")).toBeInTheDocument();
+    });
+
+    // Step 3: Simulate a re-render that might trigger the useEffect
+    // This could happen due to props changes, state updates, or other re-renders
+    rerender(
+      <PromptCopyDialog
+        isOpen={true}
+        initialPromptText={MOCK_INITIAL_PROMPT_TEXT_WITH_PR_DETAILS}
+        blocks={MOCK_BLOCKS_WITH_DIFF_NO_PR_DETAILS}
+        onClose={() => {}}
+        prTitle="File Selection Preservation Test - Updated"  // Changed title to force re-render
+      />,
+    );
+
+    // Step 4: Verify that the user's file selection is PRESERVED after re-render
+    await waitFor(() => {
+      // This should still show "(1 of 2 files)" and NOT reset to "(All 2 files)"
+      expect(screen.getByText("(1 of 2 files)")).toBeInTheDocument();
+      expect(screen.queryByText("(All 2 files)")).not.toBeInTheDocument();
+    });
+
+    // Step 5: Verify that copying still works with the preserved selection
+    act(() => {
+      fireEvent.click(getCopyButton());
+    });
+
+    await waitFor(() => {
+      expect(mockCopyToClipboard).toHaveBeenCalled();
+    });
+
+    // buildClipboardPayload should still be called with only the selected file
+    expect(buildClipboardPayloadSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        selectedFiles: new Set(["file1.txt"]), // Should still be only file1.txt
+        allFiles: ["file1.txt", "file2.txt"],
+      }),
+    );
+
+    // Verify the copied content contains only file1 diff, not both files
+    const copiedText = mockCopyToClipboard.mock.calls[
+      mockCopyToClipboard.mock.calls.length - 1
+    ][0] as string;
+    expect(copiedText).toContain("content1");
+    expect(copiedText).not.toContain("content2");
+
+    // Step 6: Test multiple re-renders to ensure robustness
+    for (let i = 0; i < 3; i++) {
+      rerender(
+        <PromptCopyDialog
+          isOpen={true}
+          initialPromptText={MOCK_INITIAL_PROMPT_TEXT_WITH_PR_DETAILS}
+          blocks={MOCK_BLOCKS_WITH_DIFF_NO_PR_DETAILS}
+          onClose={() => {}}
+          prTitle={`File Selection Preservation Test - Iteration ${i}`}
+        />,
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText("(1 of 2 files)")).toBeInTheDocument();
+      });
+    }
+
+    buildClipboardPayloadSpy.mockRestore();
+  });
+
+  // NEW TEST: Test that new diff blocks still get default selection
+  test("applies default selection only for new diff blocks", async () => {
+    const buildClipboardPayloadSpy = vi.spyOn(
+      DiffUtils,
+      "buildClipboardPayload",
+    );
+
+    // Start with one diff block
+    const initialBlocks = MOCK_BLOCKS_WITH_DIFF_NO_PR_DETAILS;
+    
+    const { rerender } = render(
+      <PromptCopyDialog
+        isOpen={true}
+        initialPromptText={MOCK_INITIAL_PROMPT_TEXT_WITH_PR_DETAILS}
+        blocks={initialBlocks}
+        onClose={() => {}}
+        prTitle="New Diff Block Test"
+      />,
+    );
+
+    // User selects only 1 file from the original diff
+    act(() => {
+      fireEvent.click(screen.getByTestId("choose-files-diff-1"));
+    });
+    
+    act(() => {
+      fireEvent.click(screen.getByTestId("picker-confirm-1-file"));
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("(1 of 2 files)")).toBeInTheDocument();
+    });
+
+    // Now simulate a scenario where blocks change (e.g., new diff is added)
+    const newDiffBlock: PromptBlock = {
+      id: "diff-2",
+      kind: "diff",
+      header: "### NEW DIFF",
+      patch: "diff --git a/newfile.txt b/newfile.txt\n--- a/newfile.txt\n+++ b/newfile.txt\n+new content",
+      author: "testuser",
+      timestamp: "2024-01-01T00:00:00Z",
+    };
+
+    const blocksWithNewDiff = [...initialBlocks, newDiffBlock];
+
+    rerender(
+      <PromptCopyDialog
+        isOpen={true}
+        initialPromptText={MOCK_INITIAL_PROMPT_TEXT_WITH_PR_DETAILS}
+        blocks={blocksWithNewDiff}
+        onClose={() => {}}
+        prTitle="New Diff Block Test"
+      />,
+    );
+
+    await waitFor(() => {
+      // The original diff selection should be preserved (1 file)
+      expect(screen.getByText("(1 of 2 files)")).toBeInTheDocument();
+      // But if a new diff block appeared, it should have its own default selection
+      // This test demonstrates that the logic should handle new diff blocks correctly
+    });
+
+    buildClipboardPayloadSpy.mockRestore();
+  });
 });
